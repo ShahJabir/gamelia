@@ -8,6 +8,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { ModeToggle } from "@/components/mode-toggle";
 
 export default async function Home() {
   await auth.protect();
@@ -28,6 +29,7 @@ export default async function Home() {
       </Empty>
       <UserButton />
       <OrganizationSwitcher />
+      <ModeToggle />
     </>
   );
 }
