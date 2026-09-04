@@ -27,9 +27,9 @@ export default async function Home() {
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
-      <UserButton />
+      {/* <UserButton />
       <OrganizationSwitcher />
-      <ModeToggle />
+      <ModeToggle /> */}
     </>
   );
 }

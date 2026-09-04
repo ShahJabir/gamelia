@@ -33,7 +33,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Gamelia",
     description: "Describe a game and watch it come to life. Gamelia is an agentic three.js game builder that plans the scene, writes the code, and streams playable worlds from plain English.",
-    url: "",
+    url: "https://gamelia.shahjabir.com.bd",
     siteName: "Gamelia",
     images: [
       {
