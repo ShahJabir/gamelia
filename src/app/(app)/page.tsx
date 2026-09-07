@@ -3,12 +3,14 @@ import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
 import { ModeToggle } from "@/components/mode-toggle";
+import { ChatComposer } from "@/components/chat-composer";
 
 export default async function Home() {
   await auth.protect();
@@ -26,6 +28,9 @@ export default async function Home() {
             own words. If you can describe it, you can play it.
           </EmptyDescription>
         </EmptyHeader>
+        <EmptyContent className="max-w-2xl">
+          <ChatComposer />
+        </EmptyContent>
       </Empty>
       {/* <UserButton />
       <OrganizationSwitcher />
