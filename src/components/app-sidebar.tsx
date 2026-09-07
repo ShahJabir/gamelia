@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -20,10 +21,22 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { Game } from "@/lib/db/schema";
 
 export function AppSidebar({ games }: { games: Game[] }) {
   const pathname = usePathname();
+  const [popoverOpen, setPopoverOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    setPopoverOpen(false);
+  }, [pathname]);
 
   return (
     <Sidebar collapsible="icon">
@@ -64,30 +77,20 @@ export function AppSidebar({ games }: { games: Game[] }) {
         <SidebarGroup>
           <SidebarGroupLabel>Recents</SidebarGroupLabel>
           <SidebarGroupContent>
+            {/* Expanded sidebar mode */}
             {games.length === 0 ? (
-              <>
-                <Empty className="border py-2.5 p-2 group-data-[collapsible=icon]:hidden">
-                  <EmptyDescription className="text-xs">
-                    Your games will live here.
-                  </EmptyDescription>
-                </Empty>
-                <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
-                  <SidebarMenuItem>
-                    <SidebarMenuButton tooltip="Recents">
-                      <MessageSquareIcon />
-                      <span>Recents</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </>
+              <Empty className="border py-2.5 p-2 group-data-[collapsible=icon]:hidden">
+                <EmptyDescription className="text-xs">
+                  Your games will live here.
+                </EmptyDescription>
+              </Empty>
             ) : (
-              <SidebarMenu>
+              <SidebarMenu className="group-data-[collapsible=icon]:hidden">
                 {games.map((game) => (
                   <SidebarMenuItem key={game.id}>
                     <SidebarMenuButton
-                      render={<Link href={`/games/${game.id}`} />}
-                      isActive={pathname === `/games/${game.id}`}
-                      tooltip={game.title}
+                      render={<Link href={`/game/${game.id}`} />}
+                      isActive={pathname === `/game/${game.id}`}
                     >
                       <MessageSquareIcon />
                       <span>{game.title}</span>
@@ -96,6 +99,51 @@ export function AppSidebar({ games }: { games: Game[] }) {
                 ))}
               </SidebarMenu>
             )}
+
+            {/* Collapsed sidebar mode with Popover composition */}
+            <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
+              <SidebarMenuItem>
+                <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+                  <PopoverTrigger
+                    render={
+                      <SidebarMenuButton>
+                        <MessageSquareIcon />
+                        <span>Recents</span>
+                      </SidebarMenuButton>
+                    }
+                  />
+                  <PopoverContent side="right" align="start">
+                    <PopoverHeader>
+                      <PopoverTitle className="text-xs font-medium text-muted-foreground">
+                        Recents
+                      </PopoverTitle>
+                    </PopoverHeader>
+                    {games.length === 0 ? (
+                      <Empty className="border py-2.5 p-2">
+                        <EmptyDescription className="text-xs">
+                          Your games will live here.
+                        </EmptyDescription>
+                      </Empty>
+                    ) : (
+                      <SidebarMenu className="max-h-80 overflow-y-auto">
+                        {games.map((game) => (
+                          <SidebarMenuItem key={game.id}>
+                            <SidebarMenuButton
+                              render={<Link href={`/game/${game.id}`} />}
+                              isActive={pathname === `/game/${game.id}`}
+                              onClick={() => setPopoverOpen(false)}
+                            >
+                              <MessageSquareIcon />
+                              <span>{game.title}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

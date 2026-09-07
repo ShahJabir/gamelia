@@ -26,5 +26,5 @@ export async function createGame(formData: FormData) {
     })
     .returning();
 
-  redirect(`/games/${game.id}`);
+  redirect(`/game/${game.id}`);
 }
