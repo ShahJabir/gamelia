@@ -20,8 +20,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
+import type { Game } from "@/lib/db/schema";
 
-export function AppSidebar() {
+export function AppSidebar({ games }: { games: Game[] }) {
   const pathname = usePathname();
 
   return (
@@ -63,19 +64,38 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Recents</SidebarGroupLabel>
           <SidebarGroupContent>
-            <Empty className="border py-2.5 p-2 group-data-[collapsible=icon]:hidden">
-              <EmptyDescription className="text-xs">
-                Your games will live here.
-              </EmptyDescription>
-            </Empty>
-            <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Recents">
-                  <MessageSquareIcon />
-                  <span>Recents</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            {games.length === 0 ? (
+              <>
+                <Empty className="border py-2.5 p-2 group-data-[collapsible=icon]:hidden">
+                  <EmptyDescription className="text-xs">
+                    Your games will live here.
+                  </EmptyDescription>
+                </Empty>
+                <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton tooltip="Recents">
+                      <MessageSquareIcon />
+                      <span>Recents</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </>
+            ) : (
+              <SidebarMenu>
+                {games.map((game) => (
+                  <SidebarMenuItem key={game.id}>
+                    <SidebarMenuButton
+                      render={<Link href={`/games/${game.id}`} />}
+                      isActive={pathname === `/games/${game.id}`}
+                      tooltip={game.title}
+                    >
+                      <MessageSquareIcon />
+                      <span>{game.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            )}
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
