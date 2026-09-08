@@ -1,4 +1,11 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 export const games = pgTable(
   "games",
@@ -6,6 +13,7 @@ export const games = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: text("org_id").notNull(),
     title: text("title").notNull(),
+    messages: jsonb("messages").$type<unknown[]>().default([]).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -17,3 +25,4 @@ export const games = pgTable(
 
 export type Game = typeof games.$inferSelect;
 export type NewGame = typeof games.$inferInsert;
+
