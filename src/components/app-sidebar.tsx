@@ -21,6 +21,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
+import { DeleteGameButton } from "@/components/delete-game-button";
 import {
   Popover,
   PopoverContent,
@@ -87,14 +88,22 @@ export function AppSidebar({ games }: { games: Game[] }) {
             ) : (
               <SidebarMenu className="group-data-[collapsible=icon]:hidden">
                 {games.map((game) => (
-                  <SidebarMenuItem key={game.id}>
+                  <SidebarMenuItem key={game.id} className="group/item relative flex items-center">
                     <SidebarMenuButton
                       render={<Link href={`/game/${game.id}`} />}
                       isActive={pathname === `/game/${game.id}`}
+                      className="pr-7"
                     >
                       <MessageSquareIcon />
-                      <span>{game.title}</span>
+                      <span className="truncate">{game.title}</span>
                     </SidebarMenuButton>
+                    <div className="absolute right-1 z-10 flex items-center">
+                      <DeleteGameButton
+                        gameId={game.id}
+                        gameTitle={game.title}
+                        variant="sidebar"
+                      />
+                    </div>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -127,15 +136,23 @@ export function AppSidebar({ games }: { games: Game[] }) {
                     ) : (
                       <SidebarMenu className="max-h-80 overflow-y-auto">
                         {games.map((game) => (
-                          <SidebarMenuItem key={game.id}>
+                          <SidebarMenuItem key={game.id} className="group/item relative flex items-center">
                             <SidebarMenuButton
                               render={<Link href={`/game/${game.id}`} />}
                               isActive={pathname === `/game/${game.id}`}
                               onClick={() => setPopoverOpen(false)}
+                              className="pr-7"
                             >
                               <MessageSquareIcon />
-                              <span>{game.title}</span>
+                              <span className="truncate">{game.title}</span>
                             </SidebarMenuButton>
+                            <div className="absolute right-1 z-10 flex items-center">
+                              <DeleteGameButton
+                                gameId={game.id}
+                                gameTitle={game.title}
+                                variant="sidebar"
+                              />
+                            </div>
                           </SidebarMenuItem>
                         ))}
                       </SidebarMenu>

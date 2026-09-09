@@ -1,5 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 const anthropic = createAnthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -11,6 +12,10 @@ const anthropic = createAnthropic({
 const google = createGoogleGenerativeAI({
   apiKey:
     process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY,
+});
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
 });
 
 export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
@@ -82,7 +87,30 @@ export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
         "Hugging Face integration for Qwen 2.5 is coming soon. Please select Gemini 3.6 Flash."
       );
 
+    // --- OpenRouter (Google: Gemma 4 31B Free) ---
+    case "google/gemma-4-31b-it:free":
+    case "gemma-4-31b-it:free":
+    case "gemma-4-31b":
+      if (process.env.OPENROUTER_API_KEY) {
+        return openrouter("google/gemma-4-31b-it:free");
+      }
+      // Graceful fallback to gemini-3.5-flash-lite if OPENROUTER_API_KEY is not yet configured
+      if (
+        process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+        process.env.GEMINI_API_KEY
+      ) {
+        return google("gemini-3.5-flash-lite");
+      }
+      return openrouter("google/gemma-4-31b-it:free");
+
     default:
+      if (modelId.startsWith("google/gemma") || modelId.startsWith("openrouter/")) {
+        const cleanId = modelId.replace(/^openrouter\//, "");
+        if (process.env.OPENROUTER_API_KEY) {
+          return openrouter(cleanId);
+        }
+        return google("gemini-3.5-flash-lite");
+      }
       if (modelId.startsWith("gemini")) {
         return google("gemini-3.6-flash");
       }

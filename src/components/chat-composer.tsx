@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import {
   ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
   GridIcon,
+  Loader2Icon,
   SquareIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ export function ChatComposer({
 }: ChatComposerProps = {}) {
   const [internalValue, setInternalValue] = useState("");
   const [internalModel, setInternalModel] = useState<string>(DEFAULT_MODEL_ID);
+  const [isPending, startTransition] = useTransition();
 
   const isControlled = value !== undefined;
   const currentValue = isControlled ? value : internalValue;
@@ -79,35 +81,36 @@ export function ChatComposer({
     onModelChange?.(id);
   };
 
-  const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    if (onSubmit) {
-      e.preventDefault();
-      const text = currentValue.trim();
-      if (!text || disabled || isLoading) return;
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const text = currentValue.trim();
+    if (!text || disabled || isLoading || isPending) return;
 
+    if (onSubmit) {
       if (!isControlled) {
         setInternalValue("");
       }
       await onSubmit(text, selectedModelId);
+    } else {
+      const formData = new FormData();
+      formData.set("prompt", text);
+      formData.set("title", text);
+      formData.set("model", selectedModelId);
+
+      startTransition(async () => {
+        try {
+          await createGame(formData);
+        } catch (err) {
+          console.error("[ChatComposer] Failed to create game:", err);
+        }
+      });
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (onSubmit) {
-        const text = currentValue.trim();
-        if (!text || disabled || isLoading) return;
-
-        if (!isControlled) {
-          setInternalValue("");
-        }
-        onSubmit(text, selectedModelId);
-      } else {
-        if (currentValue.trim() && !disabled) {
-          e.currentTarget.form?.requestSubmit();
-        }
-      }
+      handleSubmit();
     }
   };
 
@@ -117,11 +120,11 @@ export function ChatComposer({
 
   return (
     <form
-      action={onSubmit ? undefined : createGame}
-      onSubmit={onSubmit ? handleFormSubmit : undefined}
+      onSubmit={handleSubmit}
       className={cn("w-full", className)}
     >
       <input type="hidden" name="model" value={selectedModelId} />
+      <input type="hidden" name="prompt" value={currentValue} />
       <InputGroup className="bg-popover">
         <InputGroupTextarea
           name="title"
@@ -130,7 +133,7 @@ export function ChatComposer({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
-          disabled={disabled || isLoading}
+          disabled={disabled || isLoading || isPending}
           className="field-sizing-content max-h-48 min-h-10"
         />
         <InputGroupAddon align="block-end">
@@ -191,7 +194,16 @@ export function ChatComposer({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {isLoading && onStop ? (
+            {isPending ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                className="rounded-full"
+                disabled
+              >
+                <Loader2Icon className="size-3.5 animate-spin" />
+              </Button>
+            ) : isLoading && onStop ? (
               <Button
                 type="button"
                 onClick={onStop}
@@ -206,7 +218,7 @@ export function ChatComposer({
                 type="submit"
                 size="icon-sm"
                 className="rounded-full"
-                disabled={disabled || !currentValue.trim() || isLoading}
+                disabled={disabled || !currentValue.trim() || isLoading || isPending}
               >
                 <ArrowUpIcon />
               </Button>

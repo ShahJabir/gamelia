@@ -1,7 +1,7 @@
 export interface AIModel {
   id: string;
   name: string;
-  provider: "google" | "anthropic" | "openai" | "custom";
+  provider: "google" | "anthropic" | "openai" | "openrouter" | "custom";
   description: string;
   badge?: string;
   category: string;
@@ -78,7 +78,16 @@ export const AVAILABLE_MODELS: AIModel[] = [
     ready: false,
   },
 
-  // --- Open Source & Hugging Face ---
+  // --- Open Source & OpenRouter ---
+  {
+    id: "google/gemma-4-31b-it:free",
+    name: "Google: Gemma 4 31B (free)",
+    provider: "openrouter",
+    description: "Google Gemma 4 open weights model hosted free on OpenRouter",
+    badge: "100% Free",
+    category: "Open Source",
+    ready: true,
+  },
   {
     id: "qwen-2.5-coder",
     name: "Qwen 2.5 Coder",

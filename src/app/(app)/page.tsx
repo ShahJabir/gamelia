@@ -8,10 +8,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Button } from "@/components/ui/button";
 import { ChatComposer } from "@/components/chat-composer";
-import { createGame } from "@/lib/games/action";
-import { suggestions } from "@/lib/games/suggestions";
+import { HomeSuggestions } from "@/components/home-suggestions";
 
 export default async function Home() {
   await auth.protect();
@@ -30,17 +28,7 @@ export default async function Home() {
       </EmptyHeader>
       <EmptyContent className="max-w-2xl gap-6">
         <ChatComposer />
-        <div className="flex flex-wrap justify-center gap-2">
-          {suggestions.map((suggestion) => (
-            <form key={suggestion.label} action={createGame}>
-              <input type="hidden" name="title" value={suggestion.label} />
-              <Button type="submit" variant="outline" size="sm" className="rounded-full font-normal text-muted-foreground">
-                <suggestion.icon />
-                {suggestion.label}
-              </Button>
-            </form>
-          ))}
-        </div>
+        <HomeSuggestions />
       </EmptyContent>
     </Empty>
   );

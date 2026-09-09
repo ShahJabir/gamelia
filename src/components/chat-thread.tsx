@@ -15,6 +15,7 @@ import {
 import { Message, MessageAvatar, MessageContent } from "@/components/ui/message";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { ChatComposer } from "@/components/chat-composer";
+import { DeleteGameButton } from "@/components/delete-game-button";
 import { getCachedMessages, setCachedMessages } from "@/lib/cache/chat-cache";
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models";
 
@@ -162,14 +163,13 @@ export function ChatThread({
         if (!isMounted) return;
 
         const cleanCached = cached ? sanitizeUIMessages(cached) : [];
-        if (cleanCached.length >= cleanInitialMessages.length && cleanCached.length > 0) {
+        if (cleanCached.length > cleanInitialMessages.length) {
           setMessages(cleanCached);
           return;
         }
 
-        // 2. If browser cache is not available or outdated, use Neon DB data (initialMessages)
+        // 2. If browser cache is not seeded yet, seed it with initial Neon DB messages
         if (cleanInitialMessages.length > 0) {
-          setMessages(cleanInitialMessages);
           await setCachedMessages(id, cleanInitialMessages);
           return;
         }
@@ -195,7 +195,7 @@ export function ChatThread({
     return () => {
       isMounted = false;
     };
-  }, [id, initialMessages, setMessages]);
+  }, [id, cleanInitialMessages, setMessages]);
 
   const isLoading = status === "submitted" || status === "streaming";
   const displayMessages = messages.filter(
@@ -203,27 +203,81 @@ export function ChatThread({
   );
 
   return (
-    <MessageScrollerProvider>
-      <MessageScroller className="h-full">
-        <MessageScrollerViewport>
-          <MessageScrollerContent className="mx-auto w-full max-w-2xl p-6">
-            {displayMessages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
-                <p className="text-base font-medium text-foreground">
-                  {title || "New Game"}
-                </p>
-                <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-                  No message history yet. Describe your ideas or ask questions
-                  below to start designing your game.
-                </p>
-              </div>
-            ) : (
-              displayMessages.map((msg, i) => {
-                const text = getMessageText(msg);
-                const isAssistant = msg.role === "assistant";
-                return (
-                  <MessageScrollerItem key={msg.id ?? i}>
-                    {isAssistant ? (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Sticky Header with Chat Title and Delete Icon Button */}
+      <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-md">
+        <div className="flex items-center gap-2 overflow-hidden">
+          <h1
+            className="truncate text-sm font-semibold text-foreground"
+            title={title || "New Game"}
+          >
+            {title || "New Game"}
+          </h1>
+        </div>
+        <div className="flex items-center gap-1">
+          <DeleteGameButton gameId={id} gameTitle={title} variant="header" />
+        </div>
+      </header>
+
+      {/* Main Chat Area */}
+      <div className="relative flex-1 min-h-0 overflow-hidden">
+        <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+          <MessageScroller className="h-full">
+            <MessageScrollerViewport>
+              <MessageScrollerContent className="mx-auto w-full max-w-2xl p-6">
+                {displayMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
+                    <p className="text-base font-medium text-foreground">
+                      {title || "New Game"}
+                    </p>
+                    <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                      No message history yet. Describe your ideas or ask questions
+                      below to start designing your game.
+                    </p>
+                  </div>
+                ) : (
+                  displayMessages.map((msg, i) => {
+                    const text = getMessageText(msg);
+                    const isAssistant = msg.role === "assistant";
+                    return (
+                      <MessageScrollerItem
+                        key={msg.id ?? i}
+                        messageId={msg.id ?? `msg-${i}`}
+                        scrollAnchor={!isAssistant}
+                      >
+                        {isAssistant ? (
+                          <Message>
+                            <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
+                              <Image
+                                src="/logo.svg"
+                                alt="Assistant"
+                                width={32}
+                                height={32}
+                              />
+                            </MessageAvatar>
+                            <MessageContent>
+                              <Bubble variant="ghost">
+                                <BubbleContent>{text}</BubbleContent>
+                              </Bubble>
+                            </MessageContent>
+                          </Message>
+                        ) : (
+                          <Message align="end">
+                            <MessageContent>
+                              <Bubble variant="secondary">
+                                <BubbleContent>{text}</BubbleContent>
+                              </Bubble>
+                            </MessageContent>
+                          </Message>
+                        )}
+                      </MessageScrollerItem>
+                    );
+                  })
+                )}
+                {isLoading &&
+                  displayMessages.length > 0 &&
+                  displayMessages[displayMessages.length - 1]?.role === "user" && (
+                    <MessageScrollerItem key="ai-thinking" scrollAnchor={false}>
                       <Message>
                         <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
                           <Image
@@ -235,77 +289,47 @@ export function ChatThread({
                         </MessageAvatar>
                         <MessageContent>
                           <Bubble variant="ghost">
-                            <BubbleContent>{text}</BubbleContent>
+                            <BubbleContent className="flex items-center gap-2 py-1 text-xs italic text-muted-foreground">
+                              <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" />
+                              Thinking...
+                            </BubbleContent>
                           </Bubble>
                         </MessageContent>
                       </Message>
-                    ) : (
-                      <Message align="end">
-                        <MessageContent>
-                          <Bubble variant="secondary">
-                            <BubbleContent>{text}</BubbleContent>
-                          </Bubble>
-                        </MessageContent>
-                      </Message>
-                    )}
-                  </MessageScrollerItem>
-                );
-              })
-            )}
-            {isLoading &&
-              displayMessages.length > 0 &&
-              displayMessages[displayMessages.length - 1]?.role === "user" && (
-                <MessageScrollerItem key="ai-thinking">
-                  <Message>
-                    <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                      <Image
-                        src="/logo.svg"
-                        alt="Assistant"
-                        width={32}
-                        height={32}
-                      />
-                    </MessageAvatar>
-                    <MessageContent>
-                      <Bubble variant="ghost">
-                        <BubbleContent className="flex items-center gap-2 py-1 text-xs italic text-muted-foreground">
-                          <span className="inline-block size-1.5 animate-pulse rounded-full bg-primary" />
-                          Thinking...
-                        </BubbleContent>
-                      </Bubble>
-                    </MessageContent>
-                  </Message>
-                </MessageScrollerItem>
+                    </MessageScrollerItem>
+                  )}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton className="bottom-28 z-20 shadow-md" />
+            <div className="mx-auto w-full max-w-2xl px-6 pb-6">
+              {error && (
+                <div className="mb-2 flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  <span>{formatErrorMessage(error)}</span>
+                  <button
+                    type="button"
+                    className="ml-2 underline font-medium hover:opacity-80"
+                    onClick={() => {
+                      regenerate({ body: { model: selectedModel } });
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <MessageScrollerButton />
-        <div className="mx-auto w-full max-w-2xl px-6 pb-6">
-          {error && (
-            <div className="mb-2 flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              <span>{formatErrorMessage(error)}</span>
-              <button
-                type="button"
-                className="ml-2 underline font-medium hover:opacity-80"
-                onClick={() => {
-                  regenerate({ body: { model: selectedModel } });
-                }}
-              >
-                Retry
-              </button>
+              <ChatComposer
+                value={input}
+                onValueChange={setInput}
+                model={selectedModel}
+                onModelChange={setSelectedModel}
+                onSubmit={handleSendMessage}
+                isLoading={isLoading}
+                onStop={stop}
+                placeholder="Ask a follow-up or describe changes..."
+              />
             </div>
-          )}
-          <ChatComposer
-            value={input}
-            onValueChange={setInput}
-            model={selectedModel}
-            onModelChange={setSelectedModel}
-            onSubmit={handleSendMessage}
-            isLoading={isLoading}
-            onStop={stop}
-            placeholder="Ask a follow-up or describe changes..."
-          />
-        </div>
-      </MessageScroller>
-    </MessageScrollerProvider>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      </div>
+    </div>
   );
 }
