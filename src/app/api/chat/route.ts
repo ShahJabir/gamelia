@@ -113,6 +113,18 @@ export async function POST(req: Request) {
     await saveGameMessages(id, effectiveOrgId, validMessages);
   }
 
+  // Ensure Daytona sandbox creation is triggered if not yet created
+  try {
+    const { getGame } = await import("@/lib/games/queries");
+    const game = await getGame(id, effectiveOrgId);
+    if (game && !game.sandboxId) {
+      const { onChatStart } = await import("@/trigger/chat");
+      await onChatStart.trigger({ gameId: id });
+    }
+  } catch (err) {
+    console.warn("[POST /api/chat] Failed to trigger onChatStart:", err);
+  }
+
   try {
     const selectedModel = getLanguageModel(model);
 

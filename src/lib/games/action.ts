@@ -76,6 +76,14 @@ export async function createGame(formData: FormData) {
     })
     .returning();
 
+  // Trigger Daytona sandbox provisioning in the background via Trigger.dev
+  try {
+    const { onChatStart } = await import("@/trigger/chat");
+    await onChatStart.trigger({ gameId: game.id });
+  } catch (err) {
+    console.warn("[createGame] Failed to trigger onChatStart task:", err);
+  }
+
   revalidatePath("/", "layout");
   redirect(`/game/${game.id}`);
 }

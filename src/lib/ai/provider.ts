@@ -35,7 +35,7 @@ export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
         !process.env.GEMINI_API_KEY
       ) {
         throw new Error(
-          "GOOGLE_GENERATIVE_AI_API_KEY is not set in .env.local. Please get a free API key at https://aistudio.google.com/apikey and add it to .env.local."
+          "GOOGLE_GENERATIVE_AI_API_KEY is not set in .env. Please get a free API key at https://aistudio.google.com/apikey and add it to .env."
         );
       }
       // Gracefully map decommissioned models to gemini-3.6-flash
@@ -53,13 +53,13 @@ export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
     case "claude-3-5-sonnet-20241022":
     case "claude-3-5-sonnet-latest":
       if (!process.env.ANTHROPIC_API_KEY) {
-        throw new Error("ANTHROPIC_API_KEY is not set in .env.local.");
+        throw new Error("ANTHROPIC_API_KEY is not set in .env.");
       }
       return anthropic("claude-3-5-sonnet-20241022");
 
     case "fable-5-1":
       if (!process.env.ANTHROPIC_API_KEY) {
-        throw new Error("ANTHROPIC_API_KEY is not set in .env.local.");
+        throw new Error("ANTHROPIC_API_KEY is not set in .env.");
       }
       return anthropic("claude-3-5-sonnet-20241022");
 

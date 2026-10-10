@@ -1,8 +1,6 @@
 import { config } from "dotenv";
 import { defineConfig } from "drizzle-kit";
 
-// Next.js prioritizes .env.local over .env
-config({ path: ".env.local" });
 config({ path: ".env" });
 
 const databaseUrl = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
