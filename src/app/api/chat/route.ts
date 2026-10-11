@@ -3,6 +3,7 @@ import {
   convertToModelMessages,
   createUIMessageStreamResponse,
   streamText,
+  stepCountIs,
   toUIMessageStream,
   UIMessage,
 } from "ai";
@@ -13,6 +14,7 @@ import {
 } from "@/lib/games/queries";
 import { getLanguageModel } from "@/lib/ai/provider";
 import { systemPrompt } from "@/lib/games/instructions";
+import { createGameTools } from "@/lib/games/tools";
 
 export const maxDuration = 30;
 
@@ -141,10 +143,14 @@ export async function POST(req: Request) {
   try {
     const selectedModel = getLanguageModel(model);
 
+    const gameTools = createGameTools(id);
+
     const result = streamText({
       model: selectedModel,
       instructions: systemPrompt,
       messages: await convertToModelMessages(validMessages),
+      tools: gameTools,
+      stopWhen: stepCountIs(15),
     });
 
     return createUIMessageStreamResponse({

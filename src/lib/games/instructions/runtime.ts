@@ -1,31 +1,84 @@
-export const runtimeInstructions: string[] = [
-  `# Daytona Runtime & Game Directory Environment
+import { GAME_DIR, PREVIEW_PORT } from "@/lib/daytona/utils";
 
-The game runs inside an isolated Daytona cloud sandbox designed for fast, real-time code execution and instant live previews.`,
+export const runtimeInstructions: string = `# Where the game lives
 
-  `## 1. Directory Structure & Files
-- Working Directory: \`/home/daytona/game/\`
-- Primary Entrypoint: \`/home/daytona/game/index.html\`
-- Auxiliary Files: Relative assets such as scripts (\`game.js\`), stylesheets (\`style.css\`), or media assets live in \`/home/daytona/game/\` and can be loaded via relative paths (e.g., \`<script src="game.js"></script>\` or \`<link rel="stylesheet" href="style.css">\`).
-- Self-Contained Deliverables: Single-file or clean multi-file HTML5 architectures are ideal. \`index.html\` must be complete, valid, and immediately renderable in a browser.`,
+Each game has its own Linux sandbox, and it is the same sandbox for the whole
+conversation — what you wrote on an earlier turn is still on disk.
 
-  `## 2. Server & Preview Execution
-- Static HTTP Server: The game is served via Python HTTP server on port 8000 (\`python3 -m http.server 8000 --directory /home/daytona/game\`).
-- Preview Iframe: The application embeds the game directly in the chat preview panel using a signed Daytona preview URL or proxy.
-- Static Browser Runtime: There is no background bundler (Vite/Webpack) or backend Node.js process running inside the game directory. All JavaScript, CSS, and HTML must run natively in the browser without an ahead-of-time compilation step.`,
+The game's source lives in ${GAME_DIR}. That directory is the game: nothing
+outside it is served, and nothing that isn't a file in it survives the turn.
 
-  `## 3. Libraries & CDN Usage
-- When using external libraries or game engines (such as Phaser, Three.js, PixiJS, Howler.js, Tone.js, Tailwind CSS, Canvas-Confetti), load them directly in \`index.html\` via reputable CDNs:
-  - \`<script src="https://cdnjs.cloudflare.com/ajax/libs/..."></script>\`
-  - \`<script src="https://cdn.jsdelivr.net/npm/..."></script>\`
-  - \`<script src="https://unpkg.com/..."></script>\`
-- Always use production/minified stable CDN releases to ensure instant loading inside the sandbox preview iframe.`,
+${GAME_DIR}/index.html is the entry point — it is what loads at "/", so it has
+to exist and has to be the playable game.
 
-  `## 4. Responsive Viewport & Iframe Compatibility
-- The game will be embedded inside a resizable iframe in the Gamelia UI.
-- Always include \`<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">\`.
-- Style the canvas/container to adapt gracefully to various viewport sizes:
-  - CSS: \`html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }\`
-  - Ensure the canvas scales to fit within the viewport while maintaining aspect ratio (e.g., 16:9 or 4:3 letterboxing) or fills 100% with a resize listener.
-- Prevent default scrolling when using arrow keys or spacebar (\`event.preventDefault()\` on keydown for game keys) so the page inside the iframe doesn't scroll while playing.`,
-];
+# What is already there
+
+A new sandbox is not empty. It starts with:
+
+- index.html — the page, carrying the import map described below.
+- style.css — a full-bleed canvas, no scrolling, no tap highlights.
+- welcome.js — the holding screen. Delete it and its <script> tag on the first
+  turn; it is a placeholder, not part of any game.
+- report.js — the error reporter. It catches whatever the page throws and hands
+  it to the preview panel, which is how a game that fails to start says so
+  instead of showing a black frame. Don't edit it, don't delete it, and leave
+  its <script> tag where it is: first in index.html, above the import map and
+  above your own scripts, and plain rather than type="module". A reporter that
+  loads after the file that broke reports nothing.
+- engine/ — a 3D game toolkit, described in its own section. Read that before
+  building anything, and do not rewrite these files.
+
+# How it reaches the player
+
+A static file server is already running on port ${PREVIEW_PORT} against that
+directory, and the preview panel loads it in an iframe. You never start,
+restart or configure a server; one is running before your first turn, and a
+second one on that port would only fail to bind.
+
+Files are served exactly as they are written, straight from disk, per request.
+There is no build step, no bundler, no transpiler and no package install, and
+nothing to restart after an edit — a saved file is live on the next reload.
+
+That means the browser has to understand what you write:
+
+- HTML, CSS and JavaScript that runs as-is. No TypeScript, no JSX, no SCSS.
+- Your own modules load by relative path: "./player.js", "./engine/index.js".
+- Everything runs in the player's browser. The game has no backend, no
+  database and no server-side code; persistence is localStorage.
+
+# three.js, and the import map
+
+index.html declares an import map, so these two specifiers resolve in the
+browser with no bundler:
+
+- "three" — the library itself.
+- "three/addons/..." — everything under examples/jsm: OrbitControls,
+  GLTFLoader, EffectComposer, RoundedBoxGeometry and the rest.
+
+  import * as THREE from "three"
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+
+The map only applies to the document that declares it, so it has to stay in
+index.html, above the first module script. If you rewrite index.html, carry it
+across — along with the report.js tag above it — because without the map every
+import of "three" fails and the screen stays blank, including every file under
+engine/.
+
+Any other library has to come from a CDN by full url, loaded by the page.
+
+# Assets
+
+Beyond three.js there is no art and no audio in the sandbox, so a path to an
+image you didn't create is a broken image. Build models out of geometry
+(engine/models.js has a shelf of them), draw textures to a canvas
+(engine/materials.js), and synthesise sound (engine/sound.js). Reach for a CDN
+url only when you are certain of it.
+
+# Layout
+
+Keep a small game in index.html and one module beside it. As it grows, split it
+into more modules next to it (./game.js, ./player.js, ./enemies.js) rather than
+letting one file sprawl — you will be reading this code back on every later
+turn. Leave engine/ alone and import from it; it is shared ground, and a game
+that edits it is a game whose next turn starts by re-reading a toolkit that no
+longer matches what you know about it.`;

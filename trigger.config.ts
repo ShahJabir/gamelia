@@ -4,4 +4,7 @@ export default defineConfig({
   project: "proj_pvszrqiipgvlgtbevbyz",
   dirs: ["./src/trigger"],
   maxDuration: 300,
+  build: {
+    external: ["form-data", "busboy"],
+  },
 });

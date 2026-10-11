@@ -5,8 +5,8 @@ import { runtimeInstructions } from "./runtime";
  * Combined array of game instructions for designing, building, and running games in Daytona.
  */
 export const gameInstructions: string[] = [
-  ...workflowInstructions,
-  ...runtimeInstructions,
+  workflowInstructions,
+  runtimeInstructions,
 ];
 
 /**

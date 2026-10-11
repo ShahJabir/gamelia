@@ -1,14 +1,21 @@
-import { Daytona } from "@daytona/sdk";
+import { Daytona, type Sandbox } from "@daytona/sdk";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { games } from "@/lib/db/schema";
 
+export const GAME_DIR = "/home/daytona/game";
+export const PORT = 8000;
+export const PREVIEW_PORT = PORT;
+
 /**
- * Creates a Daytona sandbox for a game,
- * seeds /home/daytona/game/index.html with "New game",
- * and saves the sandboxId on the game in the database.
+ * Retrieves a guaranteed, running Daytona sandbox instance for a game.
+ * If the sandbox does not exist yet or failed to load, it creates a new one,
+ * seeds /home/daytona/game/index.html, updates the database, and ensures
+ * the sandbox is running and ready for tool execution.
  */
-export async function createGameSandbox(gameId: string): Promise<string> {
+export async function getGameSandbox(
+  gameId: string,
+): Promise<{ sandbox: Sandbox }> {
   const apiKey = process.env.DAYTONA_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -16,7 +23,9 @@ export async function createGameSandbox(gameId: string): Promise<string> {
     );
   }
 
-  // Check if game already has a sandbox
+  const daytona = new Daytona({ apiKey });
+
+  // 1. Look up existing sandboxId for this game in the database
   const [existingGame] = await db
     .select({ sandboxId: games.sandboxId })
     .from(games)
@@ -24,19 +33,46 @@ export async function createGameSandbox(gameId: string): Promise<string> {
     .limit(1);
 
   if (existingGame?.sandboxId) {
-    console.log(
-      `[createGameSandbox] Game ${gameId} already has sandbox ${existingGame.sandboxId}`,
-    );
-    return existingGame.sandboxId;
+    try {
+      const sandbox = await daytona.get(existingGame.sandboxId);
+      // Ensure the sandbox is running
+      if (sandbox.state === "stopped" || sandbox.state === "stopping") {
+        console.log(
+          `[getGameSandbox] Starting stopped sandbox ${existingGame.sandboxId}...`,
+        );
+        await sandbox.start();
+      }
+      return { sandbox };
+    } catch (err) {
+      console.warn(
+        `[getGameSandbox] Sandbox ${existingGame.sandboxId} failed to load, creating replacement:`,
+        err,
+      );
+    }
   }
 
-  const daytona = new Daytona({ apiKey });
+  // 2. If no game record was found, check if gameId is actually a direct sandbox ID or name
+  if (!existingGame) {
+    try {
+      const directSandbox = await daytona.get(gameId);
+      if (
+        directSandbox.state === "stopped" ||
+        directSandbox.state === "stopping"
+      ) {
+        await directSandbox.start();
+      }
+      return { sandbox: directSandbox };
+    } catch {
+      // Proceed to create a new sandbox
+    }
+  }
 
-  console.log(`[createGameSandbox] Creating sandbox for game ${gameId}...`);
+  // 3. Create a new sandbox
+  console.log(`[getGameSandbox] Creating new sandbox for game ${gameId}...`);
   const sandbox = await daytona.create();
-  console.log(`[createGameSandbox] Sandbox created with ID: ${sandbox.id}`);
+  console.log(`[getGameSandbox] Sandbox created with ID: ${sandbox.id}`);
 
-  // Seed /home/daytona/game/index.html with "New game"
+  // Seed /home/daytona/game/index.html
   try {
     await sandbox.fs.createFolder("/home/daytona/game", "755").catch(() => {});
     await sandbox.fs.uploadFile(
@@ -44,33 +80,43 @@ export async function createGameSandbox(gameId: string): Promise<string> {
       "/home/daytona/game/index.html",
     );
     console.log(
-      `[createGameSandbox] Seeded /home/daytona/game/index.html with "New game"`,
+      `[getGameSandbox] Seeded /home/daytona/game/index.html with "New game"`,
     );
   } catch (fsError) {
     console.warn(
-      `[createGameSandbox] Direct upload failed, falling back to shell command:`,
+      `[getGameSandbox] Direct upload failed, falling back to shell command:`,
       fsError,
     );
     try {
       await sandbox.process.executeCommand(
         'mkdir -p /home/daytona/game && printf "New game" > /home/daytona/game/index.html',
       );
-      console.log(`[createGameSandbox] Seeded index.html via shell fallback`);
     } catch (cmdError) {
-      console.error(`[createGameSandbox] Failed to seed index.html:`, cmdError);
+      console.error(`[getGameSandbox] Failed to seed index.html:`, cmdError);
     }
   }
 
-  // Save the sandbox ID on the game in Neon DB
+  // 4. Save the sandbox ID on the game in Neon DB
   await db
     .update(games)
     .set({ sandboxId: sandbox.id })
     .where(eq(games.id, gameId));
 
   console.log(
-    `[createGameSandbox] Saved sandboxId ${sandbox.id} to game ${gameId}`,
+    `[getGameSandbox] Saved sandboxId ${sandbox.id} to game ${gameId}`,
   );
-  return sandbox.id;
+  return { sandbox };
+}
+
+/**
+ * Creates a Daytona sandbox for a game,
+ * seeds /home/daytona/game/index.html with "New game",
+ * and saves the sandboxId on the game in the database.
+ */
+export async function createGameSandbox(
+  gameId: string,
+): Promise<{ sandbox: Sandbox }> {
+  return getGameSandbox(gameId);
 }
 
 /**
@@ -95,16 +141,14 @@ export async function startGameServer(sandboxId: string) {
     await sandbox.start();
   }
 
-  const port = 8000;
-
   // First health-check for an existing instance before starting a new one
   try {
     const healthCheck = await sandbox.process.executeCommand(
-      `curl -s -o /dev/null -w "%{http_code}" http://localhost:${port} || true`,
+      `curl -s -o /dev/null -w "%{http_code}" http://localhost:${PORT} || true`,
     );
     if (healthCheck.result?.trim() === "200") {
       console.log(
-        `[startGameServer] Server already running and healthy on port ${port} (sandbox: ${sandboxId})`,
+        `[startGameServer] Server already running and healthy on port ${PORT} (sandbox: ${sandboxId})`,
       );
       return { sandbox };
     }
@@ -114,7 +158,7 @@ export async function startGameServer(sandboxId: string) {
 
   // Not healthy / not running: ensure game directory and index.html exist, then start server
   console.log(
-    `[startGameServer] Server not responding on port ${port}, starting python HTTP server...`,
+    `[startGameServer] Server not responding on port ${PORT}, starting python HTTP server...`,
   );
   await sandbox.process.executeCommand(
     'mkdir -p /home/daytona/game && test -f /home/daytona/game/index.html || printf "New game" > /home/daytona/game/index.html',
@@ -122,7 +166,7 @@ export async function startGameServer(sandboxId: string) {
 
   // Serve index.html from /home/daytona/game
   await sandbox.process.executeCommand(
-    `nohup python3 -m http.server ${port} --directory /home/daytona/game > /tmp/game-server.log 2>&1 &`,
+    `nohup python3 -m http.server ${PORT} --directory /home/daytona/game > /tmp/game-server.log 2>&1 &`,
   );
 
   // Poll for healthy status
@@ -131,12 +175,12 @@ export async function startGameServer(sandboxId: string) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
       const check = await sandbox.process.executeCommand(
-        `curl -s -o /dev/null -w "%{http_code}" http://localhost:${port} || true`,
+        `curl -s -o /dev/null -w "%{http_code}" http://localhost:${PORT} || true`,
       );
       if (check.result?.trim() === "200") {
         isHealthy = true;
         console.log(
-          `[startGameServer] Game server is now healthy on port ${port}`,
+          `[startGameServer] Game server is now healthy on port ${PORT}`,
         );
         break;
       }
@@ -193,5 +237,3 @@ export async function getGamePreviewLink(
 
   return preview;
 }
-
-
