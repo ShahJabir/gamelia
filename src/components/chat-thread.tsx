@@ -45,8 +45,8 @@ export interface FormattedToolCall {
   id: string;
   name: string;
   state: "active" | "done" | "failed";
-  input?: Record<string, any>;
-  output?: Record<string, any>;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
   error?: string;
 }
 
@@ -79,27 +79,30 @@ function getMessageText(
 function hasToolCalls(msg: UIMessage): boolean {
   if (Array.isArray(msg.parts)) {
     return msg.parts.some(
-      (p: any) =>
-        p &&
-        ((typeof p.type === "string" &&
-          (p.type.startsWith("tool-") ||
-            p.type === "dynamic-tool" ||
-            p.type === "tool-invocation")) ||
-          p.toolInvocation),
+      (p: unknown) => {
+        const part = p as Record<string, unknown> | null;
+        return (
+          part &&
+          ((typeof part.type === "string" &&
+            (part.type.startsWith("tool-") ||
+              part.type === "dynamic-tool" ||
+              part.type === "tool-invocation")) ||
+            Boolean(part.toolInvocation))
+        );
+      },
     );
   }
-  return (
-    Array.isArray((msg as any).toolInvocations) &&
-    (msg as any).toolInvocations.length > 0
-  );
+  const legacy = (msg as unknown as Record<string, unknown>).toolInvocations;
+  return Array.isArray(legacy) && legacy.length > 0;
 }
 
 function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
   const tools: FormattedToolCall[] = [];
 
   if (Array.isArray(msg.parts)) {
-    for (const part of msg.parts as any[]) {
-      if (!part) continue;
+    for (const p of msg.parts) {
+      if (!p) continue;
+      const part = p as Record<string, unknown>;
 
       if (typeof part.type === "string" && part.type.startsWith("tool-")) {
         const name = part.type.slice(5);
@@ -109,11 +112,8 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
         if (rawState === "output-error" || rawState === "output-denied") {
           state = "failed";
         } else if (rawState === "output-available") {
-          if (
-            part.output &&
-            typeof part.output === "object" &&
-            part.output.success === false
-          ) {
+          const out = part.output as Record<string, unknown> | undefined;
+          if (out && typeof out === "object" && out.success === false) {
             state = "failed";
           } else {
             state = "done";
@@ -122,27 +122,27 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
           state = "active";
         }
 
+        const partOutput = part.output as Record<string, unknown> | undefined;
         tools.push({
-          id: part.toolCallId || `${name}-${Math.random()}`,
+          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
           name,
           state,
-          input: part.input,
-          output: part.output,
-          error: part.errorText || (part.output?.error as string | undefined),
+          input: part.input as Record<string, unknown> | undefined,
+          output: partOutput,
+          error:
+            (part.errorText as string | undefined) ||
+            (partOutput?.error as string | undefined),
         });
       } else if (part.type === "dynamic-tool") {
-        const name = part.toolName || "tool";
+        const name = (part.toolName as string) || "tool";
         const rawState = part.state;
         let state: "active" | "done" | "failed" = "active";
 
         if (rawState === "output-error" || rawState === "output-denied") {
           state = "failed";
         } else if (rawState === "output-available") {
-          if (
-            part.output &&
-            typeof part.output === "object" &&
-            part.output.success === false
-          ) {
+          const out = part.output as Record<string, unknown> | undefined;
+          if (out && typeof out === "object" && out.success === false) {
             state = "failed";
           } else {
             state = "done";
@@ -151,55 +151,63 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
           state = "active";
         }
 
+        const partOutput = part.output as Record<string, unknown> | undefined;
         tools.push({
-          id: part.toolCallId || `${name}-${Math.random()}`,
+          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
           name,
           state,
-          input: part.input,
-          output: part.output,
-          error: part.errorText || (part.output?.error as string | undefined),
+          input: part.input as Record<string, unknown> | undefined,
+          output: partOutput,
+          error:
+            (part.errorText as string | undefined) ||
+            (partOutput?.error as string | undefined),
         });
       } else if (part.type === "tool-invocation" && part.toolInvocation) {
-        const ti = part.toolInvocation;
+        const ti = part.toolInvocation as Record<string, unknown>;
+        const tiResult = ti.result as Record<string, unknown> | undefined;
         const state: "active" | "done" | "failed" =
           ti.state === "result"
-            ? ti.result?.success === false
+            ? tiResult?.success === false
               ? "failed"
               : "done"
             : ti.state === "error"
               ? "failed"
               : "active";
         tools.push({
-          id: ti.toolCallId || `${ti.toolName}-${Math.random()}`,
-          name: ti.toolName,
+          id: (ti.toolCallId as string) || `${String(ti.toolName)}-${Math.random()}`,
+          name: String(ti.toolName),
           state,
-          input: ti.args,
-          output: ti.result,
-          error: ti.result?.error,
+          input: ti.args as Record<string, unknown> | undefined,
+          output: tiResult,
+          error: tiResult?.error as string | undefined,
         });
       }
     }
   }
 
-  const legacyInvocations = (msg as any).toolInvocations;
+  const legacyInvocations = (msg as unknown as Record<string, unknown>)
+    .toolInvocations;
   if (Array.isArray(legacyInvocations)) {
-    for (const ti of legacyInvocations) {
-      if (tools.some((t) => t.id === ti.toolCallId)) continue;
+    for (const item of legacyInvocations) {
+      const ti = item as Record<string, unknown>;
+      const toolCallId = ti.toolCallId as string;
+      if (tools.some((t) => t.id === toolCallId)) continue;
+      const tiResult = ti.result as Record<string, unknown> | undefined;
       const state: "active" | "done" | "failed" =
         ti.state === "result"
-          ? ti.result?.success === false
+          ? tiResult?.success === false
             ? "failed"
             : "done"
           : ti.state === "error"
             ? "failed"
             : "active";
       tools.push({
-        id: ti.toolCallId || `${ti.toolName}-${Math.random()}`,
-        name: ti.toolName,
+        id: toolCallId || `${String(ti.toolName)}-${Math.random()}`,
+        name: String(ti.toolName),
         state,
-        input: ti.args,
-        output: ti.result,
-        error: ti.result?.error,
+        input: ti.args as Record<string, unknown> | undefined,
+        output: tiResult,
+        error: tiResult?.error as string | undefined,
       });
     }
   }
@@ -210,7 +218,7 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
 function getToolActionText(
   name: string,
   state: "active" | "done" | "failed",
-  input?: Record<string, any>,
+  input?: Record<string, unknown>,
   error?: string,
 ): string {
   const rawPath = input?.filePath || input?.directoryPath;
@@ -340,9 +348,9 @@ function ToolCallMarker({ tool }: { tool: FormattedToolCall }) {
               <span className="font-semibold">Error:</span> {tool.error}
             </div>
           )}
-          {tool.output?.message && (
+          {Boolean(tool.output?.message) && (
             <div className="text-foreground/80">
-              {String(tool.output.message)}
+              {String(tool.output?.message)}
             </div>
           )}
           {tool.input && Object.keys(tool.input).length > 0 && (
@@ -394,16 +402,9 @@ export function ChatThread({
 }: ChatThreadProps) {
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID);
-  const [previewAvailable, setPreviewAvailable] = useState<boolean>(
-    Boolean(sandboxId),
-  );
+  const [hasFetchedPreview, setHasFetchedPreview] = useState<boolean>(false);
+  const previewAvailable = Boolean(sandboxId) || hasFetchedPreview;
   const autoTriggeredRef = useRef(false);
-
-  useEffect(() => {
-    if (sandboxId) {
-      setPreviewAvailable(true);
-    }
-  }, [sandboxId]);
 
   const checkPreviewAvailability = useCallback(async () => {
     try {
@@ -413,7 +414,7 @@ export function ChatThread({
       if (res.ok) {
         const data = await res.json();
         if (data.url || data.sandboxId) {
-          setPreviewAvailable(true);
+          setHasFetchedPreview(true);
           if (data.sandboxId && onPreviewAvailable) {
             onPreviewAvailable(data.sandboxId);
           }
@@ -425,10 +426,10 @@ export function ChatThread({
   }, [id, onPreviewAvailable]);
 
   useEffect(() => {
-    if (!previewAvailable) {
-      checkPreviewAvailability();
-    }
-  }, [previewAvailable, checkPreviewAvailability]);
+    if (sandboxId || hasFetchedPreview) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void checkPreviewAvailability();
+  }, [sandboxId, hasFetchedPreview, checkPreviewAvailability]);
 
   const cleanInitialMessages = sanitizeUIMessages(initialMessages);
 

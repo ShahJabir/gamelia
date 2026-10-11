@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "src/lib/games/runtime/**",
+    "lib/games/runtime/**",
+    "**/games/runtime/**",
   ]),
 ]);
 

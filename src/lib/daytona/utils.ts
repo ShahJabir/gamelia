@@ -1,3 +1,6 @@
+import path from "node:path";
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -6,6 +9,110 @@ import { games } from "@/lib/db/schema";
 export const GAME_DIR = "/home/daytona/game";
 export const PORT = 8000;
 export const PREVIEW_PORT = PORT;
+
+export function getRuntimeDirPath(): string | null {
+  const candidates = [
+    path.join(process.cwd(), "src/lib/games/runtime"),
+    path.join(process.cwd(), "lib/games/runtime"),
+    path.resolve(__dirname, "../games/runtime"),
+    path.resolve(__dirname, "../../lib/games/runtime"),
+    path.resolve(__dirname, "../../../src/lib/games/runtime"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fsSync.existsSync(/*turbopackIgnore: true*/ candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+interface RuntimeFileEntry {
+  relativePath: string;
+  fullPath: string;
+  isDirectory: boolean;
+}
+
+async function collectRuntimeEntries(
+  dir: string,
+  baseDir: string = dir,
+): Promise<RuntimeFileEntry[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const results: RuntimeFileEntry[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
+
+    if (entry.isDirectory()) {
+      results.push({ relativePath, fullPath, isDirectory: true });
+      const subEntries = await collectRuntimeEntries(fullPath, baseDir);
+      results.push(...subEntries);
+    } else if (entry.isFile()) {
+      results.push({ relativePath, fullPath, isDirectory: false });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Recursively seeds all files, folders, and subfolders from runtime/* into the sandbox under GAME_DIR.
+ */
+export async function seedSandboxFromRuntime(sandbox: Sandbox): Promise<void> {
+  const runtimeDir = getRuntimeDirPath();
+  if (!runtimeDir) {
+    console.warn(
+      "[seedSandboxFromRuntime] Runtime directory not found, skipping runtime seed.",
+    );
+    return;
+  }
+
+  // 1. Ensure GAME_DIR exists in the sandbox
+  await sandbox.fs.createFolder(GAME_DIR, "755").catch(() => {});
+
+  const entries = await collectRuntimeEntries(runtimeDir);
+  console.log(
+    `[seedSandboxFromRuntime] Found ${entries.length} entries to seed from ${runtimeDir}`,
+  );
+
+  // 2. Create all directories first
+  const directories = entries.filter((e) => e.isDirectory);
+  for (const dir of directories) {
+    const remoteDirPath = path.posix.join(GAME_DIR, dir.relativePath);
+    await sandbox.fs.createFolder(remoteDirPath, "755").catch(() => {});
+  }
+
+  // 3. Upload all files
+  const files = entries.filter((e) => !e.isDirectory);
+  for (const file of files) {
+    const remoteFilePath = path.posix.join(GAME_DIR, file.relativePath);
+    const remoteParentDir = path.posix.dirname(remoteFilePath);
+
+    if (remoteParentDir !== GAME_DIR) {
+      await sandbox.fs.createFolder(remoteParentDir, "755").catch(() => {});
+    }
+
+    const contentBuffer = await fs.readFile(file.fullPath);
+
+    try {
+      await sandbox.fs.uploadFile(contentBuffer, remoteFilePath);
+      console.log(`[seedSandboxFromRuntime] Seeded ${file.relativePath}`);
+    } catch (uploadErr) {
+      console.warn(
+        `[seedSandboxFromRuntime] Direct upload failed for ${file.relativePath}, falling back to shell command:`,
+        uploadErr,
+      );
+      const b64 = contentBuffer.toString("base64");
+      await sandbox.process.executeCommand(
+        `mkdir -p "${remoteParentDir}" && echo "${b64}" | base64 -d > "${remoteFilePath}"`,
+      );
+      console.log(
+        `[seedSandboxFromRuntime] Seeded (via fallback) ${file.relativePath}`,
+      );
+    }
+  }
+}
 
 /**
  * Retrieves a guaranteed, running Daytona sandbox instance for a game.
@@ -72,28 +179,14 @@ export async function getGameSandbox(
   const sandbox = await daytona.create();
   console.log(`[getGameSandbox] Sandbox created with ID: ${sandbox.id}`);
 
-  // Seed /home/daytona/game/index.html
+  // Seed /home/daytona/game from runtime/*
   try {
-    await sandbox.fs.createFolder("/home/daytona/game", "755").catch(() => {});
-    await sandbox.fs.uploadFile(
-      Buffer.from("New game"),
-      "/home/daytona/game/index.html",
+    await seedSandboxFromRuntime(sandbox);
+  } catch (seedError) {
+    console.error(
+      `[getGameSandbox] Failed to seed sandbox from runtime:`,
+      seedError,
     );
-    console.log(
-      `[getGameSandbox] Seeded /home/daytona/game/index.html with "New game"`,
-    );
-  } catch (fsError) {
-    console.warn(
-      `[getGameSandbox] Direct upload failed, falling back to shell command:`,
-      fsError,
-    );
-    try {
-      await sandbox.process.executeCommand(
-        'mkdir -p /home/daytona/game && printf "New game" > /home/daytona/game/index.html',
-      );
-    } catch (cmdError) {
-      console.error(`[getGameSandbox] Failed to seed index.html:`, cmdError);
-    }
   }
 
   // 4. Save the sandbox ID on the game in Neon DB
@@ -160,9 +253,18 @@ export async function startGameServer(sandboxId: string) {
   console.log(
     `[startGameServer] Server not responding on port ${PORT}, starting python HTTP server...`,
   );
-  await sandbox.process.executeCommand(
-    'mkdir -p /home/daytona/game && test -f /home/daytona/game/index.html || printf "New game" > /home/daytona/game/index.html',
-  );
+  try {
+    const checkFile = await sandbox.process.executeCommand(
+      'test -f /home/daytona/game/index.html && echo "exists" || true',
+    );
+    if (!checkFile.result?.includes("exists")) {
+      await seedSandboxFromRuntime(sandbox);
+    }
+  } catch {
+    await sandbox.process.executeCommand(
+      'mkdir -p /home/daytona/game && test -f /home/daytona/game/index.html || printf "New game" > /home/daytona/game/index.html',
+    );
+  }
 
   // Serve index.html from /home/daytona/game
   await sandbox.process.executeCommand(
