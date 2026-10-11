@@ -12,6 +12,7 @@ import {
   saveGameMessages,
 } from "@/lib/games/queries";
 import { getLanguageModel } from "@/lib/ai/provider";
+import { systemPrompt } from "@/lib/games/instructions";
 
 export const maxDuration = 30;
 
@@ -142,7 +143,7 @@ export async function POST(req: Request) {
 
     const result = streamText({
       model: selectedModel,
-      instructions: "You are a helpful game design assistant.",
+      instructions: systemPrompt,
       messages: await convertToModelMessages(validMessages),
     });
 

@@ -1,5 +1,8 @@
 import { task } from "@trigger.dev/sdk";
 import { createGameSandbox } from "@/lib/daytona/utils";
+import { systemPrompt, gameInstructions } from "@/lib/games/instructions";
+
+export { systemPrompt, gameInstructions };
 
 export const onChatStart = task({
   id: "on-chat-start",
