@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
-import { ChatThread } from "@/components/chat-thread";
+import { GameChat } from "@/components/game-chat";
 import { getGame } from "@/lib/games/queries";
 import type { UIMessage } from "ai";
 
@@ -21,10 +21,11 @@ export default async function GamePage({
   const initialMessages = (game.messages ?? []) as UIMessage[];
 
   return (
-    <ChatThread
+    <GameChat
       id={game.id}
       title={game.title}
       initialMessages={initialMessages}
+      sandboxId={game.sandboxId}
     />
   );
 }

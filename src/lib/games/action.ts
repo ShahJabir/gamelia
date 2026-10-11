@@ -76,13 +76,22 @@ export async function createGame(formData: FormData) {
     })
     .returning();
 
-  // Trigger Daytona sandbox provisioning in the background via Trigger.dev
+  // Provision Daytona sandbox in the background:
+  // 1. Queue via Trigger.dev task
   try {
     const { onChatStart } = await import("@/trigger/chat");
     await onChatStart.trigger({ gameId: game.id });
   } catch (err) {
     console.warn("[createGame] Failed to trigger onChatStart task:", err);
   }
+
+  // 2. Also run direct async creation to ensure sandbox is created immediately
+  // even if the Trigger.dev dev worker CLI is not running in local development
+  import("@/lib/daytona/utils").then(({ createGameSandbox }) => {
+    createGameSandbox(game.id).catch((err) => {
+      console.error("[createGame] Direct sandbox creation failed:", err);
+    });
+  });
 
   revalidatePath("/", "layout");
   redirect(`/game/${game.id}`);
