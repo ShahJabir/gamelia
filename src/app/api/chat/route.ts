@@ -116,29 +116,6 @@ export async function POST(req: Request) {
     await saveGameMessages(id, effectiveOrgId, validMessages);
   }
 
-  // Ensure Daytona sandbox creation is triggered if not yet created
-  try {
-    const { getGame } = await import("@/lib/games/queries");
-    const game = await getGame(id, effectiveOrgId);
-    if (game && !game.sandboxId) {
-      // 1. Queue via Trigger.dev task
-      try {
-        const { onChatStart } = await import("@/trigger/chat");
-        await onChatStart.trigger({ gameId: id });
-      } catch (triggerErr) {
-        console.warn("[POST /api/chat] Trigger.dev trigger warning:", triggerErr);
-      }
-
-      // 2. Also run direct async creation so sandbox is created immediately
-      import("@/lib/daytona/utils").then(({ createGameSandbox }) => {
-        createGameSandbox(id).catch((err) => {
-          console.error("[POST /api/chat] Direct sandbox creation failed:", err);
-        });
-      });
-    }
-  } catch (err) {
-    console.warn("[POST /api/chat] Failed to check/trigger sandbox:", err);
-  }
 
   try {
     const selectedModel = getLanguageModel(model);

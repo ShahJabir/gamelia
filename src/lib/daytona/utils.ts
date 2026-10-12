@@ -120,9 +120,19 @@ export async function seedSandboxFromRuntime(sandbox: Sandbox): Promise<void> {
  * seeds /home/daytona/game/index.html, updates the database, and ensures
  * the sandbox is running and ready for tool execution.
  */
+const inFlightSandboxCreations = new Map<string, Promise<{ sandbox: Sandbox }>>();
+
 export async function getGameSandbox(
   gameId: string,
 ): Promise<{ sandbox: Sandbox }> {
+  // 1. If a creation for this game is already in progress, await the existing promise
+  if (inFlightSandboxCreations.has(gameId)) {
+    console.log(
+      `[getGameSandbox] Sandbox creation already in-flight for ${gameId}, awaiting existing promise...`,
+    );
+    return inFlightSandboxCreations.get(gameId)!;
+  }
+
   const apiKey = process.env.DAYTONA_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -132,7 +142,7 @@ export async function getGameSandbox(
 
   const daytona = new Daytona({ apiKey });
 
-  // 1. Look up existing sandboxId for this game in the database
+  // 2. Look up existing sandboxId for this game in the database
   const [existingGame] = await db
     .select({ sandboxId: games.sandboxId })
     .from(games)
@@ -158,7 +168,7 @@ export async function getGameSandbox(
     }
   }
 
-  // 2. If no game record was found, check if gameId is actually a direct sandbox ID or name
+  // 3. If no game record was found, check if gameId is actually a direct sandbox ID or name
   if (!existingGame) {
     try {
       const directSandbox = await daytona.get(gameId);
@@ -174,31 +184,40 @@ export async function getGameSandbox(
     }
   }
 
-  // 3. Create a new sandbox
-  console.log(`[getGameSandbox] Creating new sandbox for game ${gameId}...`);
-  const sandbox = await daytona.create();
-  console.log(`[getGameSandbox] Sandbox created with ID: ${sandbox.id}`);
+  // 4. Create a new sandbox with in-flight deduplication mutex
+  const creationPromise = (async () => {
+    try {
+      console.log(`[getGameSandbox] Creating single new sandbox for game ${gameId}...`);
+      const sandbox = await daytona.create();
+      console.log(`[getGameSandbox] Sandbox created with ID: ${sandbox.id}`);
 
-  // Seed /home/daytona/game from runtime/*
-  try {
-    await seedSandboxFromRuntime(sandbox);
-  } catch (seedError) {
-    console.error(
-      `[getGameSandbox] Failed to seed sandbox from runtime:`,
-      seedError,
-    );
-  }
+      // Seed /home/daytona/game from runtime/*
+      try {
+        await seedSandboxFromRuntime(sandbox);
+      } catch (seedError) {
+        console.error(
+          `[getGameSandbox] Failed to seed sandbox from runtime:`,
+          seedError,
+        );
+      }
 
-  // 4. Save the sandbox ID on the game in Neon DB
-  await db
-    .update(games)
-    .set({ sandboxId: sandbox.id })
-    .where(eq(games.id, gameId));
+      // Save the sandbox ID on the game in Neon DB
+      await db
+        .update(games)
+        .set({ sandboxId: sandbox.id })
+        .where(eq(games.id, gameId));
 
-  console.log(
-    `[getGameSandbox] Saved sandboxId ${sandbox.id} to game ${gameId}`,
-  );
-  return { sandbox };
+      console.log(
+        `[getGameSandbox] Saved sandboxId ${sandbox.id} to game ${gameId}`,
+      );
+      return { sandbox };
+    } finally {
+      inFlightSandboxCreations.delete(gameId);
+    }
+  })();
+
+  inFlightSandboxCreations.set(gameId, creationPromise);
+  return creationPromise;
 }
 
 /**
