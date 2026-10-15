@@ -340,8 +340,65 @@ export function createGameTools(gameIdOrSandbox: string | Sandbox) {
     read_file,
     list_files,
     delete_file,
+    ask_player,
   };
 }
+
+export const GAME_DIMENSIONS = [
+  "loop",
+  "goal",
+  "challenge",
+  "controls",
+  "world",
+  "look",
+  "feel",
+] as const;
+
+export type GameDimension = (typeof GAME_DIMENSIONS)[number];
+
+export const askPlayerInputSchema = z.object({
+  dimension: z
+    .enum(GAME_DIMENSIONS)
+    .describe(
+      "The part of the game being decided: loop (core repeated mechanic), goal (objective/win condition), challenge (obstacles/difficulty), controls (input scheme), world (setting/theme/layout), look (visual style/palette/camera), feel (pace/weight/juice/sound)",
+    ),
+  question: z
+    .string()
+    .describe(
+      "The concise, engaging question putting a specific game design choice to the player",
+    ),
+  options: z
+    .array(
+      z.object({
+        id: z.string().describe("Unique identifier for this option"),
+        label: z.string().describe("Short, clear title for the choice"),
+        description: z
+          .string()
+          .describe(
+            "Concrete explanation of how this choice affects gameplay, mechanics, or aesthetics",
+          ),
+      }),
+    )
+    .min(2)
+    .max(4)
+    .describe("2 to 4 distinct options for the player to choose from"),
+});
+
+export const askPlayerOutputSchema = z.object({
+  id: z.string().describe("The chosen option's id"),
+  label: z.string().describe("The chosen option's label"),
+});
+
+/**
+ * Human-in-the-loop tool allowing the AI to ask the player a structured question.
+ * Has no execute function — answered by the player in the UI.
+ */
+export const ask_player = tool({
+  description:
+    "Ask the player a structured design question with 2 to 4 options to settle a game dimension (loop, goal, challenge, controls, world, look, feel). Halts execution for human-in-the-loop input from the player in the UI.",
+  inputSchema: askPlayerInputSchema,
+  outputSchema: askPlayerOutputSchema,
+});
 
 export const getGameTools = createGameTools;
 
@@ -350,5 +407,10 @@ export const getGameTools = createGameTools;
  * when a target gameId is supplied.
  */
 export const gameTools = createGameTools("");
-export const { write_file, replace_text, read_file, list_files, delete_file } =
-  gameTools;
+export const {
+  write_file,
+  replace_text,
+  read_file,
+  list_files,
+  delete_file,
+} = gameTools;

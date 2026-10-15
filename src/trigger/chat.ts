@@ -12,6 +12,7 @@ import {
   read_file,
   list_files,
   delete_file,
+  ask_player,
 } from "@/lib/games/tools";
 
 export {
@@ -25,6 +26,7 @@ export {
   read_file,
   list_files,
   delete_file,
+  ask_player,
 };
 
 export const onChatStart = task({

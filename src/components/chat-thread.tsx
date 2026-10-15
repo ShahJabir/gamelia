@@ -3,7 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  type UIMessage,
+} from "ai";
 import {
   MessageScrollerProvider,
   MessageScroller,
@@ -16,6 +20,18 @@ import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Questionnaire,
+  QuestionnaireActions,
+  QuestionnaireChoice,
+  QuestionnaireChoiceDescription,
+  QuestionnaireChoices,
+  QuestionnaireDescription,
+  QuestionnaireItem,
+  QuestionnaireSubmit,
+  QuestionnaireTitle,
+} from "@/components/ui/questionnaire";
 import { ChatComposer } from "@/components/chat-composer";
 import { DeleteGameButton } from "@/components/delete-game-button";
 import { getCachedMessages, setCachedMessages } from "@/lib/cache/chat-cache";
@@ -26,6 +42,15 @@ import {
   AlertCircle,
   Loader2,
   ChevronDown,
+  RotateCcw,
+  Target,
+  Flame,
+  Gamepad2,
+  Compass,
+  Sparkles,
+  Zap,
+  HelpCircle,
+  Check,
 } from "lucide-react";
 import { cn } from "cn";
 
@@ -111,7 +136,7 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
 
         if (rawState === "output-error" || rawState === "output-denied") {
           state = "failed";
-        } else if (rawState === "output-available") {
+        } else if (rawState === "output-available" || Boolean(part.output)) {
           const out = part.output as Record<string, unknown> | undefined;
           if (out && typeof out === "object" && out.success === false) {
             state = "failed";
@@ -140,7 +165,7 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
 
         if (rawState === "output-error" || rawState === "output-denied") {
           state = "failed";
-        } else if (rawState === "output-available") {
+        } else if (rawState === "output-available" || Boolean(part.output)) {
           const out = part.output as Record<string, unknown> | undefined;
           if (out && typeof out === "object" && out.success === false) {
             state = "failed";
@@ -164,13 +189,13 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
         });
       } else if (part.type === "tool-invocation" && part.toolInvocation) {
         const ti = part.toolInvocation as Record<string, unknown>;
-        const tiResult = ti.result as Record<string, unknown> | undefined;
+        const tiResult = (ti.result ?? ti.output) as Record<string, unknown> | undefined;
         const state: "active" | "done" | "failed" =
-          ti.state === "result"
+          ti.state === "result" || ti.state === "output-available" || Boolean(tiResult)
             ? tiResult?.success === false
               ? "failed"
               : "done"
-            : ti.state === "error"
+            : ti.state === "error" || ti.state === "output-error"
               ? "failed"
               : "active";
         tools.push({
@@ -371,6 +396,284 @@ function ToolCallMarker({ tool }: { tool: FormattedToolCall }) {
   );
 }
 
+const DIMENSION_CONFIG: Record<
+  string,
+  {
+    label: string;
+    sublabel: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }
+> = {
+  loop: {
+    label: "Core Loop",
+    sublabel: "Core mechanics & repeating cycle",
+    icon: RotateCcw,
+  },
+  goal: {
+    label: "Objective",
+    sublabel: "Goals & win/loss conditions",
+    icon: Target,
+  },
+  challenge: {
+    label: "Challenge",
+    sublabel: "Obstacles, enemies & hazard design",
+    icon: Flame,
+  },
+  controls: {
+    label: "Controls",
+    sublabel: "Input mapping & movement physics",
+    icon: Gamepad2,
+  },
+  world: {
+    label: "World & Setting",
+    sublabel: "Environment, layout & theme",
+    icon: Compass,
+  },
+  look: {
+    label: "Visual Style",
+    sublabel: "Aesthetics, lighting & camera view",
+    icon: Sparkles,
+  },
+  feel: {
+    label: "Juice & Feel",
+    sublabel: "Feedback, sound & kinetic pacing",
+    icon: Zap,
+  },
+};
+
+function parseAskPlayerInput(input?: Record<string, unknown>) {
+  const dimension = (
+    typeof input?.dimension === "string" ? input.dimension : "loop"
+  ).toLowerCase();
+  const question =
+    typeof input?.question === "string" ? input.question : "Design Decision";
+  const rawOptions = Array.isArray(input?.options) ? input.options : [];
+  const options = rawOptions
+    .filter(
+      (opt): opt is Record<string, unknown> =>
+        typeof opt === "object" && opt !== null,
+    )
+    .map((opt, idx) => ({
+      id: typeof opt.id === "string" ? opt.id : `option-${idx}`,
+      label: typeof opt.label === "string" ? opt.label : `Option ${idx + 1}`,
+      description: typeof opt.description === "string" ? opt.description : "",
+    }));
+
+  return { dimension, question, options };
+}
+
+interface AskPlayerQuestionnaireProps {
+  tool: FormattedToolCall;
+  isSubmitting?: boolean;
+  onAnswer: (output: { id: string; label: string }) => void;
+}
+
+function AskPlayerQuestionnaire({
+  tool,
+  isSubmitting,
+  onAnswer,
+}: AskPlayerQuestionnaireProps) {
+  const { dimension, question, options } = parseAskPlayerInput(tool.input);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [isAnswering, setIsAnswering] = useState(false);
+
+  const dimConfig =
+    DIMENSION_CONFIG[dimension] || {
+      label: dimension ? dimension.toUpperCase() : "GAME DESIGN",
+      sublabel: "Game Decision",
+      icon: HelpCircle,
+    };
+  const DimIcon = dimConfig.icon;
+
+  const isAnswered =
+    tool.state === "done" ||
+    Boolean(tool.output?.id || tool.output?.label);
+
+  if (isAnswered) {
+    const chosenId = (tool.output?.id as string) || "";
+    const chosenLabel =
+      (tool.output?.label as string) ||
+      options.find((o) => o.id === chosenId)?.label ||
+      chosenId;
+    const chosenOption = options.find(
+      (o) => o.id === chosenId || o.label === chosenLabel,
+    );
+    const chosenDesc = chosenOption?.description;
+
+    return (
+      <div className="my-2.5 w-full rounded-xl border border-border/60 bg-muted/20 p-3.5 transition-colors dark:bg-muted/10">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="flex size-5 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <DimIcon className="size-3" />
+            </span>
+            <span className="text-[11px] font-semibold tracking-wide uppercase text-muted-foreground">
+              {dimConfig.label}
+            </span>
+          </div>
+          <Badge
+            variant="outline"
+            className="h-5 gap-1 border-emerald-500/30 bg-emerald-500/10 px-2 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+          >
+            <CheckCircle2 className="size-3" />
+            <span>Decided</span>
+          </Badge>
+        </div>
+
+        <p className="text-xs font-medium text-foreground mb-2">
+          {question}
+        </p>
+
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5 text-xs">
+          <div className="flex items-center gap-1.5 font-semibold text-foreground">
+            <Check className="size-3.5 text-emerald-500 shrink-0" />
+            <span>{chosenLabel}</span>
+          </div>
+          {chosenDesc && (
+            <p className="mt-1 pl-5 text-[11px] text-muted-foreground leading-relaxed">
+              {chosenDesc}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (tool.state === "failed") {
+    return (
+      <div className="my-2.5 w-full rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase text-muted-foreground">
+              {dimConfig.label}
+            </span>
+          </div>
+          <Badge
+            variant="destructive"
+            className="h-5 gap-1 text-[10px]"
+          >
+            <AlertCircle className="size-3" />
+            <span>Dismissed</span>
+          </Badge>
+        </div>
+        <p className="text-xs text-foreground/80">{question}</p>
+        {tool.error && (
+          <p className="mt-1 text-[11px] text-destructive">{tool.error}</p>
+        )}
+      </div>
+    );
+  }
+
+  // Active state: if options are still being received from streaming tool input
+  if (options.length === 0) {
+    return (
+      <div className="my-2.5 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 p-4 text-xs text-muted-foreground">
+        <Loader2 className="size-4 animate-spin text-primary" />
+        <span>Preparing game design question...</span>
+      </div>
+    );
+  }
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedId || isAnswering || isSubmitting) return;
+    const choice = options.find((opt) => opt.id === selectedId);
+    if (!choice) return;
+
+    setIsAnswering(true);
+    onAnswer({ id: choice.id, label: choice.label });
+  };
+
+  const isBusy = isAnswering || isSubmitting;
+
+  return (
+    <div className="my-3 w-full rounded-xl border border-primary/30 bg-card p-4 shadow-sm transition-all dark:bg-card/90">
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/40 pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <DimIcon className="size-3.5" />
+          </span>
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold tracking-wide uppercase text-foreground">
+              {dimConfig.label}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {dimConfig.sublabel}
+            </span>
+          </div>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+          <span className="size-1.5 rounded-full bg-primary animate-pulse" />
+          Player Choice
+        </span>
+      </div>
+
+      <Questionnaire
+        defaultItem="decision"
+        items={[{ name: "decision" }]}
+        shortcuts="numbers"
+        onSubmit={handleSubmit}
+        className="gap-3"
+      >
+        <QuestionnaireItem name="decision" required>
+          <QuestionnaireTitle className="text-sm font-semibold text-foreground mb-1 leading-snug">
+            {question}
+          </QuestionnaireTitle>
+          <QuestionnaireDescription className="text-xs text-muted-foreground mb-3">
+            Select an option to direct this game design decision:
+          </QuestionnaireDescription>
+
+          <QuestionnaireChoices className="grid gap-2">
+            {options.map((opt) => (
+              <QuestionnaireChoice
+                key={opt.id}
+                value={opt.id}
+                checked={selectedId === opt.id}
+                onChange={() => setSelectedId(opt.id)}
+                disabled={isBusy}
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-semibold text-foreground">
+                    {opt.label}
+                  </span>
+                  {opt.description && (
+                    <QuestionnaireChoiceDescription className="text-[11px] text-muted-foreground leading-relaxed">
+                      {opt.description}
+                    </QuestionnaireChoiceDescription>
+                  )}
+                </div>
+              </QuestionnaireChoice>
+            ))}
+          </QuestionnaireChoices>
+        </QuestionnaireItem>
+
+        <QuestionnaireActions className="mt-3 pt-1">
+          <span className="col-start-1 row-start-1 text-[11px] font-mono text-muted-foreground/80">
+            Press 1-{options.length} or click to select
+          </span>
+          <QuestionnaireSubmit
+            size="sm"
+            disabled={!selectedId || isBusy}
+            className="h-8 gap-1.5 px-3 text-xs font-medium"
+          >
+            {isBusy ? (
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                <span>Applying Decision...</span>
+              </>
+            ) : (
+              <>
+                <span>Confirm Decision</span>
+                <Check className="size-3.5" />
+              </>
+            )}
+          </QuestionnaireSubmit>
+        </QuestionnaireActions>
+      </Questionnaire>
+    </div>
+  );
+}
+
 function sanitizeUIMessages(msgs: UIMessage[]): UIMessage[] {
   return (msgs ?? []).filter((m) => {
     if (m.role === "assistant") {
@@ -438,6 +741,7 @@ export function ChatThread({
     setMessages,
     sendMessage,
     regenerate,
+    addToolOutput,
     status,
     stop,
     error,
@@ -447,6 +751,7 @@ export function ChatThread({
     transport: new DefaultChatTransport({
       api: "/api/chat",
     }),
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     onFinish: async ({ messages: finalMessages }) => {
       const clean = sanitizeUIMessages(finalMessages);
       if (clean.length > 0) {
@@ -459,6 +764,26 @@ export function ChatThread({
       onTurnFinish?.();
     },
   });
+
+  const handleAnswerQuestionnaire = useCallback(
+    async (toolCallId: string, output: { id: string; label: string }) => {
+      try {
+        if (typeof addToolOutput === "function") {
+          (addToolOutput as any)({
+            tool: "ask_player",
+            toolCallId,
+            output,
+            options: {
+              body: { model: selectedModel },
+            },
+          });
+        }
+      } catch (err) {
+        console.error("[ChatThread] Failed to submit questionnaire output:", err);
+      }
+    },
+    [addToolOutput, selectedModel],
+  );
 
   // Track status transitions to trigger onTurnFinish whenever streaming completes
   const prevStatusRef = useRef(status);
@@ -635,7 +960,12 @@ export function ChatThread({
                     const toolCalls = isAssistant
                       ? extractToolInvocations(msg)
                       : [];
-                    const hasTools = toolCalls.length > 0;
+                    const regularTools = toolCalls.filter(
+                      (t) => t.name !== "ask_player",
+                    );
+                    const askPlayerTools = toolCalls.filter(
+                      (t) => t.name === "ask_player",
+                    );
                     const isLatestAssistant =
                       isAssistant && i === latestAssistantIndex;
 
@@ -656,10 +986,10 @@ export function ChatThread({
                               />
                             </MessageAvatar>
                             <MessageContent className="w-full min-w-0">
-                              {/* Tool Call States rendered with Marker */}
-                              {hasTools && (
+                              {/* Standard tool call markers */}
+                              {regularTools.length > 0 && (
                                 <div className="mb-2 space-y-1">
-                                  {toolCalls.map((tool) => (
+                                  {regularTools.map((tool) => (
                                     <ToolCallMarker key={tool.id} tool={tool} />
                                   ))}
                                 </div>
@@ -670,6 +1000,22 @@ export function ChatThread({
                                 <Bubble variant="ghost">
                                   <BubbleContent>{text}</BubbleContent>
                                 </Bubble>
+                              )}
+
+                              {/* Human-in-the-loop Ask Player Questionnaire */}
+                              {askPlayerTools.length > 0 && (
+                                <div className="mt-2 space-y-3">
+                                  {askPlayerTools.map((tool) => (
+                                    <AskPlayerQuestionnaire
+                                      key={tool.id}
+                                      tool={tool}
+                                      isSubmitting={isLoading}
+                                      onAnswer={(output) =>
+                                        handleAnswerQuestionnaire(tool.id, output)
+                                      }
+                                    />
+                                  ))}
+                                </div>
                               )}
 
                               {/* Game Preview Action Button (displayed after finishing chat when preview is available) */}

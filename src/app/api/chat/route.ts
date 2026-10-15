@@ -33,11 +33,27 @@ function sanitizeMessages(msgs: UIMessage[]): UIMessage[] {
             typeof (p as { text: unknown }).text === "string" &&
             ((p as { text: string }).text).trim().length > 0,
         );
+      const hasTools =
+        Array.isArray(m.parts) &&
+        m.parts.some((p: unknown) => {
+          const part = p as Record<string, unknown> | null;
+          return (
+            part &&
+            ((typeof part.type === "string" &&
+              (part.type.startsWith("tool-") ||
+                part.type === "dynamic-tool" ||
+                part.type === "tool-invocation")) ||
+              Boolean(part.toolInvocation))
+          );
+        });
       const record = m as unknown as Record<string, unknown>;
       const hasContent =
         typeof record.content === "string" &&
         record.content.trim().length > 0;
-      return Boolean(hasParts || hasContent);
+      const legacyTools =
+        Array.isArray(record.toolInvocations) &&
+        record.toolInvocations.length > 0;
+      return Boolean(hasParts || hasContent || hasTools || legacyTools);
     }
     return true;
   });
