@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import * as Sentry from "@sentry/nextjs";
 import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
@@ -756,9 +757,10 @@ export function ChatThread({
       const clean = sanitizeUIMessages(finalMessages);
       if (clean.length > 0) {
         await setCachedMessages(id, clean);
-        console.log(
-          `[ChatThread] Cached ${clean.length} messages to IndexedDB for game ${id}`,
-        );
+        Sentry.logger.info("Cached messages to IndexedDB", {
+          game_id: id,
+          message_count: clean.length,
+        });
       }
       checkPreviewAvailability();
       onTurnFinish?.();
@@ -779,10 +781,17 @@ export function ChatThread({
           });
         }
       } catch (err) {
-        console.error("[ChatThread] Failed to submit questionnaire output:", err);
+        Sentry.logger.error("Failed to submit questionnaire output", {
+          game_id: id,
+          tool_call_id: toolCallId,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+        Sentry.captureException(err, {
+          tags: { game_id: id, component: "chat-thread" },
+        });
       }
     },
-    [addToolOutput, selectedModel],
+    [addToolOutput, selectedModel, id],
   );
 
   // Track status transitions to trigger onTurnFinish whenever streaming completes
@@ -804,7 +813,10 @@ export function ChatThread({
       const clean = sanitizeUIMessages(messages);
       if (clean.length > 0) {
         setCachedMessages(id, clean).catch((err) => {
-          console.warn("[ChatThread] Failed to sync IndexedDB cache:", err);
+          Sentry.logger.warn("Failed to sync IndexedDB cache", {
+            game_id: id,
+            error_message: err instanceof Error ? err.message : String(err),
+          });
         });
       }
     }
@@ -842,10 +854,17 @@ export function ChatThread({
       regenerate({
         body: { model: selectedModel },
       }).catch((err) => {
-        console.error("Auto-generate error:", err);
+        Sentry.logger.error("Auto-generate response error", {
+          game_id: id,
+          model: selectedModel,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+        Sentry.captureException(err, {
+          tags: { game_id: id, component: "chat-thread" },
+        });
       });
     }
-  }, [messages, selectedModel, regenerate]);
+  }, [messages, selectedModel, regenerate, id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -882,7 +901,10 @@ export function ChatThread({
           }
         }
       } catch (err) {
-        console.error("Failed to load cached messages:", err);
+        Sentry.logger.warn("Failed to sync cached messages", {
+          game_id: id,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 

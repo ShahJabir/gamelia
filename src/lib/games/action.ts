@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { generateText, type UIMessage } from "ai";
+import * as Sentry from "@sentry/nextjs";
 import { db } from "@/lib/db";
 import { games } from "@/lib/db/schema";
 import { getLanguageModel } from "@/lib/ai/provider";
@@ -55,10 +56,16 @@ export async function createGame(formData: FormData) {
 
     if (cleanTitle) {
       title = cleanTitle;
-      console.log(`[createGame] AI generated title: "${cleanTitle}" for prompt: "${userPrompt.slice(0, 30)}..."`);
+      Sentry.logger.info("AI generated title for game", {
+        generated_title: cleanTitle,
+        prompt_preview: userPrompt.slice(0, 30),
+      });
     }
   } catch (error) {
-    console.warn("[createGame] AI title generation error, using fallback title:", error);
+    Sentry.logger.warn("AI title generation error, using fallback title", {
+      error_message: error instanceof Error ? error.message : String(error),
+      fallback_title: title,
+    });
   }
 
   const initialUserMessage: UIMessage = {
@@ -76,18 +83,37 @@ export async function createGame(formData: FormData) {
     })
     .returning();
 
+  Sentry.logger.info("Game created in database", {
+    game_id: game.id,
+    title: game.title,
+    org_id: effectiveOrgId,
+  });
+
   // Provision single Daytona sandbox in background via Trigger.dev (with direct fallback)
   try {
     const { onChatStart } = await import("@/trigger/chat");
     await onChatStart.trigger({ gameId: game.id });
+    Sentry.logger.info("Triggered background sandbox creation task", {
+      game_id: game.id,
+    });
   } catch (err) {
-    console.warn(
-      "[createGame] Trigger.dev task trigger unavailable, using direct creation:",
-      err,
+    Sentry.logger.warn(
+      "Trigger.dev task trigger unavailable, using direct creation fallback",
+      {
+        game_id: game.id,
+        error_message: err instanceof Error ? err.message : String(err),
+      },
     );
     const { createGameSandbox } = await import("@/lib/daytona/utils");
     createGameSandbox(game.id).catch((directErr) => {
-      console.error("[createGame] Direct sandbox creation failed:", directErr);
+      Sentry.logger.error("Direct sandbox creation fallback failed", {
+        game_id: game.id,
+        error_message:
+          directErr instanceof Error ? directErr.message : String(directErr),
+      });
+      Sentry.captureException(directErr, {
+        tags: { game_id: game.id, action: "createGame-fallback" },
+      });
     });
   }
 
@@ -105,6 +131,12 @@ export async function deleteGameAction(gameId: string) {
 
   const { deleteGame } = await import("@/lib/games/queries");
   const success = await deleteGame(gameId, effectiveOrgId);
+
+  Sentry.logger.info("Game deletion requested via server action", {
+    game_id: gameId,
+    org_id: effectiveOrgId,
+    success,
+  });
 
   if (success) {
     revalidatePath("/", "layout");

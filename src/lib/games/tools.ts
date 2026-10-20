@@ -1,6 +1,7 @@
 import path from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
+import * as Sentry from "@sentry/nextjs";
 import { getGameSandbox, GAME_DIR } from "@/lib/daytona/utils";
 import type { Sandbox } from "@daytona/sdk";
 
@@ -56,9 +57,13 @@ async function uploadOrWriteFile(
     await sandbox.fs.uploadFile(Buffer.from(content, "utf-8"), safePath);
     return;
   } catch (uploadErr) {
-    console.warn(
-      `[tools] sandbox.fs.uploadFile failed for ${safePath}, falling back to base64 shell write:`,
-      uploadErr instanceof Error ? uploadErr.message : uploadErr,
+    Sentry.logger.warn(
+      "sandbox.fs.uploadFile failed, falling back to base64 shell write",
+      {
+        file_path: safePath,
+        error_message:
+          uploadErr instanceof Error ? uploadErr.message : String(uploadErr),
+      },
     );
   }
 
@@ -86,9 +91,15 @@ async function downloadOrReadFile(
     const fileBuf = await sandbox.fs.downloadFile(safePath);
     return Buffer.from(fileBuf).toString("utf-8");
   } catch (downloadErr) {
-    console.warn(
-      `[tools] sandbox.fs.downloadFile failed for ${safePath}, falling back to base64 shell read:`,
-      downloadErr instanceof Error ? downloadErr.message : downloadErr,
+    Sentry.logger.warn(
+      "sandbox.fs.downloadFile failed, falling back to base64 shell read",
+      {
+        file_path: safePath,
+        error_message:
+          downloadErr instanceof Error
+            ? downloadErr.message
+            : String(downloadErr),
+      },
     );
   }
 

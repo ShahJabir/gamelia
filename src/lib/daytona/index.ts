@@ -1,4 +1,5 @@
 import { Daytona } from "@daytona/sdk";
+import * as Sentry from "@sentry/nextjs";
 
 export interface DaytonaConfigOptions {
   apiKey?: string;
@@ -42,6 +43,11 @@ export async function runCodeInSandbox({
 
   try {
     const response = await sandbox.process.codeRun(code);
+    Sentry.logger.info("Daytona sandbox code execution finished", {
+      sandbox_id: sandbox.id,
+      language,
+      exit_code: response.exitCode,
+    });
     return {
       sandboxId: sandbox.id,
       result: response.result,
@@ -50,7 +56,10 @@ export async function runCodeInSandbox({
   } finally {
     if (cleanup) {
       await sandbox.delete().catch((err) => {
-        console.warn(`[Daytona] Failed to delete sandbox ${sandbox.id}:`, err);
+        Sentry.logger.warn("Failed to delete Daytona sandbox during cleanup", {
+          sandbox_id: sandbox.id,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
       });
     }
   }

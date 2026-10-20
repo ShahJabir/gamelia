@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import { Daytona, type Sandbox } from "@daytona/sdk";
+import * as Sentry from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { games } from "@/lib/db/schema";
@@ -62,9 +63,7 @@ async function collectRuntimeEntries(
 export async function seedSandboxFromRuntime(sandbox: Sandbox): Promise<void> {
   const runtimeDir = getRuntimeDirPath();
   if (!runtimeDir) {
-    console.warn(
-      "[seedSandboxFromRuntime] Runtime directory not found, skipping runtime seed.",
-    );
+    Sentry.logger.warn("Runtime directory not found, skipping runtime seed");
     return;
   }
 
@@ -72,9 +71,11 @@ export async function seedSandboxFromRuntime(sandbox: Sandbox): Promise<void> {
   await sandbox.fs.createFolder(GAME_DIR, "755").catch(() => {});
 
   const entries = await collectRuntimeEntries(runtimeDir);
-  console.log(
-    `[seedSandboxFromRuntime] Found ${entries.length} entries to seed from ${runtimeDir}`,
-  );
+  Sentry.logger.info("Found runtime entries to seed into sandbox", {
+    sandbox_id: sandbox.id,
+    runtime_dir: runtimeDir,
+    entry_count: entries.length,
+  });
 
   // 2. Create all directories first
   const directories = entries.filter((e) => e.isDirectory);
@@ -97,21 +98,26 @@ export async function seedSandboxFromRuntime(sandbox: Sandbox): Promise<void> {
 
     try {
       await sandbox.fs.uploadFile(contentBuffer, remoteFilePath);
-      console.log(`[seedSandboxFromRuntime] Seeded ${file.relativePath}`);
     } catch (uploadErr) {
-      console.warn(
-        `[seedSandboxFromRuntime] Direct upload failed for ${file.relativePath}, falling back to shell command:`,
-        uploadErr,
+      Sentry.logger.warn(
+        "Direct upload failed for runtime file, falling back to shell command",
+        {
+          file_path: file.relativePath,
+          error_message:
+            uploadErr instanceof Error ? uploadErr.message : String(uploadErr),
+        },
       );
       const b64 = contentBuffer.toString("base64");
       await sandbox.process.executeCommand(
         `mkdir -p "${remoteParentDir}" && echo "${b64}" | base64 -d > "${remoteFilePath}"`,
       );
-      console.log(
-        `[seedSandboxFromRuntime] Seeded (via fallback) ${file.relativePath}`,
-      );
     }
   }
+
+  Sentry.logger.info("Completed seeding runtime into sandbox", {
+    sandbox_id: sandbox.id,
+    file_count: files.length,
+  });
 }
 
 /**
@@ -127,8 +133,9 @@ export async function getGameSandbox(
 ): Promise<{ sandbox: Sandbox }> {
   // 1. If a creation for this game is already in progress, await the existing promise
   if (inFlightSandboxCreations.has(gameId)) {
-    console.log(
-      `[getGameSandbox] Sandbox creation already in-flight for ${gameId}, awaiting existing promise...`,
+    Sentry.logger.debug(
+      "Sandbox creation already in-flight, awaiting existing promise",
+      { game_id: gameId },
     );
     return inFlightSandboxCreations.get(gameId)!;
   }
@@ -154,16 +161,21 @@ export async function getGameSandbox(
       const sandbox = await daytona.get(existingGame.sandboxId);
       // Ensure the sandbox is running
       if (sandbox.state === "stopped" || sandbox.state === "stopping") {
-        console.log(
-          `[getGameSandbox] Starting stopped sandbox ${existingGame.sandboxId}...`,
-        );
+        Sentry.logger.info("Starting stopped existing sandbox", {
+          sandbox_id: existingGame.sandboxId,
+          game_id: gameId,
+        });
         await sandbox.start();
       }
       return { sandbox };
     } catch (err) {
-      console.warn(
-        `[getGameSandbox] Sandbox ${existingGame.sandboxId} failed to load, creating replacement:`,
-        err,
+      Sentry.logger.warn(
+        "Existing sandbox failed to load, creating replacement",
+        {
+          sandbox_id: existingGame.sandboxId,
+          game_id: gameId,
+          error_message: err instanceof Error ? err.message : String(err),
+        },
       );
     }
   }
@@ -187,18 +199,32 @@ export async function getGameSandbox(
   // 4. Create a new sandbox with in-flight deduplication mutex
   const creationPromise = (async () => {
     try {
-      console.log(`[getGameSandbox] Creating single new sandbox for game ${gameId}...`);
+      Sentry.logger.info("Creating new Daytona sandbox for game", {
+        game_id: gameId,
+      });
       const sandbox = await daytona.create();
-      console.log(`[getGameSandbox] Sandbox created with ID: ${sandbox.id}`);
+      Sentry.logger.info("Daytona sandbox created", {
+        sandbox_id: sandbox.id,
+        game_id: gameId,
+      });
 
       // Seed /home/daytona/game from runtime/*
       try {
         await seedSandboxFromRuntime(sandbox);
       } catch (seedError) {
-        console.error(
-          `[getGameSandbox] Failed to seed sandbox from runtime:`,
-          seedError,
-        );
+        Sentry.logger.error("Failed to seed sandbox from runtime", {
+          sandbox_id: sandbox.id,
+          game_id: gameId,
+          error_message:
+            seedError instanceof Error ? seedError.message : String(seedError),
+        });
+        Sentry.captureException(seedError, {
+          tags: {
+            game_id: gameId,
+            sandbox_id: sandbox.id,
+            component: "daytona-seed",
+          },
+        });
       }
 
       // Save the sandbox ID on the game in Neon DB
@@ -207,9 +233,10 @@ export async function getGameSandbox(
         .set({ sandboxId: sandbox.id })
         .where(eq(games.id, gameId));
 
-      console.log(
-        `[getGameSandbox] Saved sandboxId ${sandbox.id} to game ${gameId}`,
-      );
+      Sentry.logger.info("Linked sandbox to game in Neon DB", {
+        sandbox_id: sandbox.id,
+        game_id: gameId,
+      });
       return { sandbox };
     } finally {
       inFlightSandboxCreations.delete(gameId);
@@ -249,7 +276,9 @@ export async function startGameServer(sandboxId: string) {
 
   // If sandbox is stopped, start it first
   if (sandbox.state === "stopped" || sandbox.state === "stopping") {
-    console.log(`[startGameServer] Starting sandbox ${sandboxId}...`);
+    Sentry.logger.info("Starting stopped sandbox for game server", {
+      sandbox_id: sandboxId,
+    });
     await sandbox.start();
   }
 
@@ -259,19 +288,24 @@ export async function startGameServer(sandboxId: string) {
       `curl -s -o /dev/null -w "%{http_code}" http://localhost:${PORT} || true`,
     );
     if (healthCheck.result?.trim() === "200") {
-      console.log(
-        `[startGameServer] Server already running and healthy on port ${PORT} (sandbox: ${sandboxId})`,
-      );
+      Sentry.logger.info("Game server already running and healthy", {
+        sandbox_id: sandboxId,
+        port: PORT,
+      });
       return { sandbox };
     }
   } catch (err) {
-    console.warn(`[startGameServer] Initial health check failed:`, err);
+    Sentry.logger.debug("Initial game server health check failed", {
+      sandbox_id: sandboxId,
+      error_message: err instanceof Error ? err.message : String(err),
+    });
   }
 
   // Not healthy / not running: ensure game directory and index.html exist, then start server
-  console.log(
-    `[startGameServer] Server not responding on port ${PORT}, starting python HTTP server...`,
-  );
+  Sentry.logger.info("Starting python HTTP server in sandbox", {
+    sandbox_id: sandboxId,
+    port: PORT,
+  });
   try {
     const checkFile = await sandbox.process.executeCommand(
       'test -f /home/daytona/game/index.html && echo "exists" || true',
@@ -300,17 +334,22 @@ export async function startGameServer(sandboxId: string) {
       );
       if (check.result?.trim() === "200") {
         isHealthy = true;
-        console.log(
-          `[startGameServer] Game server is now healthy on port ${PORT}`,
-        );
+        Sentry.logger.info("Game server is healthy on port", {
+          sandbox_id: sandboxId,
+          port: PORT,
+        });
         break;
       }
     } catch {}
   }
 
   if (!isHealthy) {
-    console.warn(
-      `[startGameServer] Game server health check did not respond with 200 within timeout`,
+    Sentry.logger.warn(
+      "Game server health check did not respond with 200 within timeout",
+      {
+        sandbox_id: sandboxId,
+        port: PORT,
+      },
     );
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import * as Sentry from "@sentry/nextjs";
 import {
   ArrowUpIcon,
   CheckIcon,
@@ -101,7 +102,14 @@ export function ChatComposer({
         try {
           await createGame(formData);
         } catch (err) {
-          console.error("[ChatComposer] Failed to create game:", err);
+          Sentry.logger.error("Failed to create game in ChatComposer", {
+            prompt_preview: text.slice(0, 30),
+            model: selectedModelId,
+            error_message: err instanceof Error ? err.message : String(err),
+          });
+          Sentry.captureException(err, {
+            tags: { component: "chat-composer", model: selectedModelId },
+          });
         }
       });
     }

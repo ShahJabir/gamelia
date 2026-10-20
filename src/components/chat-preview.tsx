@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { ExternalLink, Loader2, RefreshCw, AlertCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -14,8 +15,81 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [gameError, setGameError] = useState<string | null>(null);
   const [internalRevision, setInternalRevision] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const lastReportedErrorRef = useRef<string | null>(null);
+
+  // Poll the game iframe with 'game-ping' to check health and capture runtime/syntax errors
+  useEffect(() => {
+    if (!previewUrl) {
+      setGameError(null);
+      lastReportedErrorRef.current = null;
+      return;
+    }
+
+    const interval = setInterval(() => {
+      try {
+        iframeRef.current?.contentWindow?.postMessage("game-ping", "*");
+      } catch {
+        // ignore cross-origin access errors
+      }
+    }, 1000);
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === "game-status") {
+        if (event.data.error) {
+          const msg =
+            typeof event.data.error === "string"
+              ? event.data.error
+              : event.data.error.message || JSON.stringify(event.data.error);
+          setGameError(msg);
+
+          // Only log to Sentry when the error state changes to avoid log spam on 1s polling
+          if (lastReportedErrorRef.current !== msg) {
+            lastReportedErrorRef.current = msg;
+            Sentry.logger.warn("Game runtime error reported from preview iframe", {
+              game_id: gameId,
+              error_message: msg,
+              preview_url: previewUrl ?? "",
+              revision,
+              internal_revision: internalRevision,
+            });
+            Sentry.addBreadcrumb({
+              category: "game.preview",
+              message: `Game reported error: ${msg}`,
+              level: "warning",
+              data: { game_id: gameId, error: msg },
+            });
+          }
+        } else {
+          setGameError(null);
+          // Log recovery if the game was previously reporting an error
+          if (lastReportedErrorRef.current !== null) {
+            lastReportedErrorRef.current = null;
+            Sentry.logger.info("Game preview recovered and running healthy", {
+              game_id: gameId,
+              preview_url: previewUrl ?? "",
+              revision,
+              internal_revision: internalRevision,
+            });
+            Sentry.addBreadcrumb({
+              category: "game.preview",
+              message: "Game preview recovered and running healthy",
+              level: "info",
+              data: { game_id: gameId },
+            });
+          }
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [previewUrl, revision, internalRevision, gameId]);
 
   const fetchPreviewUrl = useCallback(async () => {
     setIsLoading(true);
@@ -35,9 +109,27 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
         throw new Error("No preview URL returned by server");
       }
       setPreviewUrl(data.url);
+      Sentry.logger.info("Game preview URL loaded", {
+        game_id: gameId,
+        preview_url: data.url,
+      });
+      Sentry.addBreadcrumb({
+        category: "game.preview",
+        message: "Game preview URL loaded",
+        level: "info",
+        data: { game_id: gameId, preview_url: data.url },
+      });
     } catch (err) {
-      console.error("[ChatPreview] Error fetching preview URL:", err);
-      setError(err instanceof Error ? err.message : "Failed to load preview");
+      const errMsg = err instanceof Error ? err.message : "Failed to load preview";
+      Sentry.logger.error("Failed to load game preview URL", {
+        game_id: gameId,
+        error_message: errMsg,
+      });
+      Sentry.captureException(err, {
+        tags: { game_id: gameId, component: "chat-preview" },
+        extra: { gameId },
+      });
+      setError(errMsg);
     } finally {
       setIsLoading(false);
     }
@@ -48,7 +140,19 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
   }, [fetchPreviewUrl]);
 
   const handleReload = () => {
-    setInternalRevision((prev) => prev + 1);
+    const nextRevision = internalRevision + 1;
+    setInternalRevision(nextRevision);
+    Sentry.logger.info("Game preview reload requested by user", {
+      game_id: gameId,
+      revision,
+      internal_revision: nextRevision,
+    });
+    Sentry.addBreadcrumb({
+      category: "game.preview",
+      message: "User reloaded game preview",
+      level: "info",
+      data: { game_id: gameId, revision, internal_revision: nextRevision },
+    });
     if (!previewUrl) {
       fetchPreviewUrl();
     }
@@ -73,9 +177,15 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={() =>
-                  window.open(previewUrl, "_blank", "noopener,noreferrer")
-                }
+                onClick={() => {
+                  Sentry.addBreadcrumb({
+                    category: "game.preview",
+                    message: "Game preview opened in new tab",
+                    level: "info",
+                    data: { game_id: gameId, preview_url: previewUrl },
+                  });
+                  window.open(previewUrl, "_blank", "noopener,noreferrer");
+                }}
                 title="Open preview in new tab"
               >
                 <ExternalLink className="size-3" />
@@ -86,7 +196,15 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
             <Button
               variant="ghost"
               size="icon-xs"
-              onClick={onClose}
+              onClick={() => {
+                Sentry.addBreadcrumb({
+                  category: "game.preview",
+                  message: "Game preview closed",
+                  level: "info",
+                  data: { game_id: gameId },
+                });
+                onClose();
+              }}
               title="Close preview"
               className="text-muted-foreground hover:text-foreground"
             >
@@ -95,6 +213,16 @@ export function ChatPreview({ gameId, onClose, revision = 0 }: ChatPreviewProps)
           )}
         </div>
       </div>
+
+      {/* Runtime/Syntax Error Notification from game-status */}
+      {gameError && (
+        <div className="flex shrink-0 items-center justify-between border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <div className="flex min-w-0 items-center gap-2">
+            <AlertCircle className="size-3.5 shrink-0" />
+            <span className="truncate font-mono">{gameError}</span>
+          </div>
+        </div>
+      )}
 
       {/* Content Area */}
       <div className="relative flex-1 min-h-0 w-full overflow-hidden">

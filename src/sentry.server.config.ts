@@ -8,6 +8,13 @@ Sentry.init({
   // Performance Monitoring
   tracesSampleRate: process.env.NODE_ENV === "development" ? 1.0 : 0.1,
 
+  // Logging: Capture server console errors and warnings in Sentry
+  integrations: [
+    Sentry.captureConsoleIntegration({
+      levels: ["error", "warn"],
+    }),
+  ],
+
   // Setting this option to true will print useful information to the console while you're setting up Sentry.
   debug: false,
 });

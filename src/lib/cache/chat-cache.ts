@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import * as Sentry from "@sentry/nextjs";
 
 const DB_NAME = "gamelia_chat_cache";
 const DB_VERSION = 1;
@@ -30,7 +31,9 @@ function openDB(): Promise<IDBDatabase | null> {
     };
 
     request.onerror = () => {
-      console.warn("IndexedDB open error:", request.error);
+      Sentry.logger.warn("IndexedDB open error", {
+        error_message: request.error?.message,
+      });
       resolve(null);
     };
   });
@@ -54,12 +57,18 @@ export async function getCachedMessages(
       };
 
       request.onerror = () => {
-        console.warn("IndexedDB get error:", request.error);
+        Sentry.logger.warn("IndexedDB get error", {
+          game_id: gameId,
+          error_message: request.error?.message,
+        });
         resolve(null);
       };
     });
   } catch (error) {
-    console.warn("Failed to get cached messages:", error);
+    Sentry.logger.warn("Failed to get cached messages", {
+      game_id: gameId,
+      error_message: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -84,12 +93,18 @@ export async function setCachedMessages(
 
       request.onsuccess = () => resolve();
       request.onerror = () => {
-        console.warn("IndexedDB put error:", request.error);
+        Sentry.logger.warn("IndexedDB put error", {
+          game_id: gameId,
+          error_message: request.error?.message,
+        });
         resolve();
       };
     });
   } catch (error) {
-    console.warn("Failed to save cached messages:", error);
+    Sentry.logger.warn("Failed to save cached messages", {
+      game_id: gameId,
+      error_message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -107,6 +122,9 @@ export async function clearCachedMessages(gameId: string): Promise<void> {
       request.onerror = () => resolve();
     });
   } catch (error) {
-    console.warn("Failed to clear cached messages:", error);
+    Sentry.logger.warn("Failed to clear cached messages", {
+      game_id: gameId,
+      error_message: error instanceof Error ? error.message : String(error),
+    });
   }
 }

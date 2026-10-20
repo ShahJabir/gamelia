@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
 import { Loader2Icon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,13 +46,30 @@ export function DeleteGameButton({
         // 2. Delete from Neon DB via Server Action
         await deleteGameAction(gameId);
 
+        Sentry.logger.info("Deleted game successfully", {
+          game_id: gameId,
+          title: gameTitle || "untitled",
+        });
+        Sentry.addBreadcrumb({
+          category: "game",
+          message: "Deleted game",
+          level: "info",
+          data: { game_id: gameId },
+        });
+
         setOpen(false);
 
         // 3. Navigate back to home page
         router.push("/");
         router.refresh();
       } catch (err) {
-        console.error("Failed to delete game:", err);
+        Sentry.logger.error("Failed to delete game", {
+          game_id: gameId,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+        Sentry.captureException(err, {
+          tags: { component: "delete-game-button", game_id: gameId },
+        });
       }
     });
   };

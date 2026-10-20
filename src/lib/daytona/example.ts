@@ -1,33 +1,39 @@
 import { Daytona } from "@daytona/sdk";
+import * as Sentry from "@sentry/nextjs";
 
 async function main() {
   const apiKey = process.env.DAYTONA_API_KEY;
   if (!apiKey) {
-    console.error("Please set DAYTONA_API_KEY environment variable in .env or your shell.");
+    Sentry.logger.error("Missing DAYTONA_API_KEY environment variable");
     process.exit(1);
   }
 
-  console.log("Initializing Daytona client...");
+  Sentry.logger.info("Initializing Daytona client");
   const daytona = new Daytona({ apiKey });
 
-  console.log("Creating Daytona sandbox...");
+  Sentry.logger.info("Creating Daytona sandbox");
   const sandbox = await daytona.create();
-  console.log(`Sandbox created with ID: ${sandbox.id}`);
+  Sentry.logger.info("Sandbox created", { sandbox_id: sandbox.id });
 
   try {
-    console.log("Running code inside sandbox...");
+    Sentry.logger.info("Running code inside sandbox", { sandbox_id: sandbox.id });
     const response = await sandbox.process.codeRun('print("Hello World")');
-    console.log("Output:");
-    console.log(response.result);
+    Sentry.logger.info("Sandbox output received", {
+      sandbox_id: sandbox.id,
+      result: response.result,
+    });
   } finally {
-    console.log("Cleaning up sandbox...");
+    Sentry.logger.info("Cleaning up sandbox", { sandbox_id: sandbox.id });
     await sandbox.delete();
-    console.log("Sandbox deleted.");
+    Sentry.logger.info("Sandbox deleted", { sandbox_id: sandbox.id });
   }
 }
 
 main().catch((err) => {
-  console.error("Daytona sandbox error:", err);
+  Sentry.logger.error("Daytona sandbox error", {
+    error_message: err instanceof Error ? err.message : String(err),
+  });
+  Sentry.captureException(err);
   process.exit(1);
 });
 

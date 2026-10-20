@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import * as Sentry from "@sentry/nextjs";
 
 const anthropic = createAnthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -44,6 +45,10 @@ export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
         modelId === "gemini-2.0-flash" ||
         modelId === "gemini-1.5-flash"
       ) {
+        Sentry.logger.info("Mapped legacy Gemini model to modern equivalent", {
+          requested_model: modelId,
+          resolved_model: "gemini-3.6-flash",
+        });
         return google("gemini-3.6-flash");
       }
       return google(modelId);
@@ -99,6 +104,10 @@ export function getLanguageModel(modelId: string = "gemini-3.6-flash") {
         process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
         process.env.GEMINI_API_KEY
       ) {
+        Sentry.logger.warn("OpenRouter API key missing, falling back to gemini-3.5-flash-lite", {
+          requested_model: modelId,
+          fallback_model: "gemini-3.5-flash-lite",
+        });
         return google("gemini-3.5-flash-lite");
       }
       return openrouter("google/gemma-4-31b-it:free");

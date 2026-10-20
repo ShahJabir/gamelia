@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { suggestions } from "@/lib/games/suggestions";
@@ -20,7 +21,13 @@ export function HomeSuggestions() {
       try {
         await createGame(formData);
       } catch (err) {
-        console.error("Failed to create game from suggestion:", err);
+        Sentry.logger.error("Failed to create game from suggestion", {
+          suggestion_label: label,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+        Sentry.captureException(err, {
+          tags: { component: "home-suggestions", suggestion: label },
+        });
         setPendingLabel(null);
       }
     });

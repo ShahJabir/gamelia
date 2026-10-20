@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { getGame } from "@/lib/games/queries";
 import { getGamePreviewLink, startGameServer } from "@/lib/daytona/utils";
 
@@ -79,7 +80,16 @@ export async function GET(
       headers,
     });
   } catch (err) {
-    console.error(`[preview proxy] Error proxying for game ${id}:`, err);
+    Sentry.logger.error("Error proxying preview request to game sandbox", {
+      game_id: id,
+      sandbox_id: game.sandboxId,
+      subpath: path?.join("/") || "",
+      error_message: err instanceof Error ? err.message : String(err),
+    });
+    Sentry.captureException(err, {
+      tags: { game_id: id, route: "preview-proxy" },
+      extra: { sandboxId: game.sandboxId, path },
+    });
     return new Response("Error connecting to game preview", { status: 502 });
   }
 }

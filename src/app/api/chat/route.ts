@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import * as Sentry from "@sentry/nextjs";
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
@@ -151,27 +152,44 @@ export async function POST(req: Request) {
         stream: result.stream,
         originalMessages: validMessages,
         onEnd: async ({ messages: finalMessages }) => {
+          let cleanCount = 0;
           try {
             const clean = sanitizeMessages(finalMessages);
+            cleanCount = clean.length;
             if (clean.length > 0) {
               await saveGameMessages(id, effectiveOrgId, clean);
-              console.log(
-                `[POST /api/chat] Successfully saved ${clean.length} messages to Neon DB for game ${id}`,
-              );
+              Sentry.logger.info("Saved chat messages to Neon DB", {
+                game_id: id,
+                org_id: effectiveOrgId,
+                message_count: clean.length,
+              });
             }
           } catch (dbErr) {
-            console.error(
-              `[POST /api/chat] Failed to save messages to Neon DB:`,
-              dbErr,
-            );
+            Sentry.logger.error("Failed to save chat messages to Neon DB", {
+              game_id: id,
+              org_id: effectiveOrgId,
+              error_message:
+                dbErr instanceof Error ? dbErr.message : String(dbErr),
+            });
+            Sentry.captureException(dbErr, {
+              tags: { game_id: id, route: "/api/chat" },
+              extra: { message_count: cleanCount },
+            });
           }
         },
       }),
     });
   } catch (err: unknown) {
-    console.error("Error in /api/chat streamText:", err);
     const errorMessage =
       err instanceof Error ? err.message : "Failed to generate response";
+    Sentry.logger.error("Error in /api/chat streamText", {
+      game_id: id,
+      model,
+      error_message: errorMessage,
+    });
+    Sentry.captureException(err, {
+      tags: { game_id: id, route: "/api/chat", model },
+    });
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { "Content-Type": "application/json" },

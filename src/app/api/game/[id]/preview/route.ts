@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { getGame } from "@/lib/games/queries";
 import { startGameServer } from "@/lib/daytona/utils";
 
@@ -36,22 +37,32 @@ export async function GET(
     // Mint the preview URL directly from the returned sandbox
     const preview = await sandbox.getSignedPreviewUrl(8000, 3600);
 
+    Sentry.logger.info("Minted game preview URL", {
+      game_id: id,
+      sandbox_id: game.sandboxId,
+      preview_url: preview.url,
+    });
+
     return NextResponse.json({
       url: preview.url,
       sandboxId: game.sandboxId,
     });
   } catch (error) {
-    console.error(
-      `[preview API] Failed to start game server for game ${id}:`,
-      error,
-    );
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : "Failed to initialize game server";
+    Sentry.logger.error("Failed to start game server for preview", {
+      game_id: id,
+      sandbox_id: game.sandboxId,
+      error_message: errorMsg,
+    });
+    Sentry.captureException(error, {
+      tags: { game_id: id, route: "/api/game/[id]/preview" },
+      extra: { sandboxId: game.sandboxId },
+    });
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to initialize game server",
-      },
+      { error: errorMsg },
       { status: 500 },
     );
   }
