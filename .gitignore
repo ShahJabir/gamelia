@@ -50,5 +50,5 @@ next-env.d.ts
 .trigger
 
 # AI Agent skills
-.agents/
-.cursor/
+.agents
+.cursor
