@@ -794,7 +794,7 @@ export function ChatThread({
     [addToolOutput, selectedModel, id],
   );
 
-  // Track status transitions to trigger onTurnFinish whenever streaming completes
+  // Track status transitions to trigger onTurnFinish and refresh credits whenever streaming completes
   const prevStatusRef = useRef(status);
   useEffect(() => {
     if (
@@ -803,9 +803,20 @@ export function ChatThread({
       status === "ready"
     ) {
       onTurnFinish?.();
+      window.dispatchEvent(new CustomEvent("credits-updated"));
     }
     prevStatusRef.current = status;
   }, [status, onTurnFinish]);
+
+  // Periodically refresh sidebar credits while a game is actively building/streaming
+  useEffect(() => {
+    if (status === "streaming" || status === "submitted") {
+      const interval = setInterval(() => {
+        window.dispatchEvent(new CustomEvent("credits-updated"));
+      }, 1500);
+      return () => clearInterval(interval);
+    }
+  }, [status]);
 
   // Guarantee IndexedDB cache stays synced whenever generation completes or messages update
   useEffect(() => {

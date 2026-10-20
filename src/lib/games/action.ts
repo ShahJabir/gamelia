@@ -92,9 +92,10 @@ export async function createGame(formData: FormData) {
   // Provision single Daytona sandbox in background via Trigger.dev (with direct fallback)
   try {
     const { onChatStart } = await import("@/trigger/chat");
-    await onChatStart.trigger({ gameId: game.id });
+    await onChatStart.trigger({ gameId: game.id, orgId: effectiveOrgId });
     Sentry.logger.info("Triggered background sandbox creation task", {
       game_id: game.id,
+      org_id: effectiveOrgId,
     });
   } catch (err) {
     Sentry.logger.warn(
@@ -104,17 +105,26 @@ export async function createGame(formData: FormData) {
         error_message: err instanceof Error ? err.message : String(err),
       },
     );
-    const { createGameSandbox } = await import("@/lib/daytona/utils");
-    createGameSandbox(game.id).catch((directErr) => {
-      Sentry.logger.error("Direct sandbox creation fallback failed", {
+    const { checkOrgCredits } = await import("@/lib/credits/check");
+    const { hasCredits } = await checkOrgCredits(effectiveOrgId);
+    if (hasCredits) {
+      const { createGameSandbox } = await import("@/lib/daytona/utils");
+      createGameSandbox(game.id).catch((directErr) => {
+        Sentry.logger.error("Direct sandbox creation fallback failed", {
+          game_id: game.id,
+          error_message:
+            directErr instanceof Error ? directErr.message : String(directErr),
+        });
+        Sentry.captureException(directErr, {
+          tags: { game_id: game.id, action: "createGame-fallback" },
+        });
+      });
+    } else {
+      Sentry.logger.warn("Direct sandbox creation fallback blocked: out of credits", {
         game_id: game.id,
-        error_message:
-          directErr instanceof Error ? directErr.message : String(directErr),
+        org_id: effectiveOrgId,
       });
-      Sentry.captureException(directErr, {
-        tags: { game_id: game.id, action: "createGame-fallback" },
-      });
-    });
+    }
   }
 
   revalidatePath("/", "layout");

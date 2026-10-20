@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import * as Sentry from "@sentry/nextjs";
 import {
   convertToModelMessages,
+  createUIMessageStream,
   createUIMessageStreamResponse,
   streamText,
   stepCountIs,
@@ -16,6 +17,9 @@ import {
 import { getLanguageModel } from "@/lib/ai/provider";
 import { systemPrompt } from "@/lib/games/instructions";
 import { createGameTools } from "@/lib/games/tools";
+import { calculateStepCost } from "@/lib/credits/pricing";
+import { chargeStep } from "@/lib/credits/ledger";
+import { checkOrgCredits, OUT_OF_CREDITS_MESSAGE } from "@/lib/credits/check";
 
 export const maxDuration = 30;
 
@@ -133,6 +137,61 @@ export async function POST(req: Request) {
     await saveGameMessages(id, effectiveOrgId, validMessages);
   }
 
+  // Check before a session starts, and before every turn after that.
+  // If the balance is empty, checkOrgCredits syncs the subscription once first.
+  const { hasCredits } = await checkOrgCredits(effectiveOrgId);
+  if (!hasCredits) {
+    Sentry.logger.warn("Blocking build in /api/chat: org out of credits", {
+      game_id: id,
+      org_id: effectiveOrgId,
+    });
+
+    const textId = crypto.randomUUID();
+    return createUIMessageStreamResponse({
+      stream: createUIMessageStream({
+        originalMessages: validMessages,
+        execute: ({ writer }) => {
+          writer.write({ type: "text-start", id: textId });
+          writer.write({
+            type: "text-delta",
+            id: textId,
+            delta: OUT_OF_CREDITS_MESSAGE,
+          });
+          writer.write({ type: "text-end", id: textId });
+        },
+        onEnd: async ({ messages: finalMessages }) => {
+          try {
+            const clean = sanitizeMessages(finalMessages);
+            if (clean.length > 0) {
+              await saveGameMessages(id, effectiveOrgId, clean);
+              Sentry.logger.info("Saved out of credits message to Neon DB", {
+                game_id: id,
+                org_id: effectiveOrgId,
+                message_count: clean.length,
+              });
+            }
+          } catch (dbErr) {
+            Sentry.logger.error(
+              "Failed to save out of credits message to Neon DB",
+              {
+                game_id: id,
+                org_id: effectiveOrgId,
+                error_message:
+                  dbErr instanceof Error ? dbErr.message : String(dbErr),
+              },
+            );
+            Sentry.captureException(dbErr, {
+              tags: {
+                game_id: id,
+                route: "/api/chat",
+                reason: "out_of_credits_save",
+              },
+            });
+          }
+        },
+      }),
+    });
+  }
 
   try {
     const selectedModel = getLanguageModel(model);
@@ -145,6 +204,26 @@ export async function POST(req: Request) {
       messages: await convertToModelMessages(validMessages),
       tools: gameTools,
       stopWhen: stepCountIs(15),
+      onStepFinish: async (step) => {
+        try {
+          if (effectiveOrgId && step.response?.id) {
+            const cost = calculateStepCost(step.usage, model);
+            await chargeStep(effectiveOrgId, step.response.id, cost);
+            Sentry.logger.info("Charged step in /api/chat", {
+              org_id: effectiveOrgId,
+              game_id: id,
+              response_id: step.response.id,
+              cost: cost.toString(),
+              step_number: step.stepNumber,
+            });
+          }
+        } catch (stepErr) {
+          Sentry.logger.error("Failed to charge step in /api/chat", {
+            game_id: id,
+            error: stepErr instanceof Error ? stepErr.message : String(stepErr),
+          });
+        }
+      },
     });
 
     return createUIMessageStreamResponse({

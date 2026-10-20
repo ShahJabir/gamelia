@@ -31,9 +31,45 @@ import {
 } from "@/components/ui/popover";
 import type { Game } from "@/lib/db/schema";
 
-export function AppSidebar({ games }: { games: Game[] }) {
+export function AppSidebar({
+  games,
+  credits = "$1.00",
+}: {
+  games: Game[];
+  credits?: string;
+}) {
   const pathname = usePathname();
   const [popoverOpen, setPopoverOpen] = React.useState(false);
+  const [balance, setBalance] = React.useState(credits);
+
+  React.useEffect(() => {
+    setBalance(credits);
+  }, [credits]);
+
+  const refreshCredits = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/credits");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.credits) {
+          setBalance(data.credits);
+        }
+      }
+    } catch {
+      // Ignore network errors
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const handleUpdate = () => {
+      refreshCredits();
+    };
+
+    window.addEventListener("credits-updated", handleUpdate);
+    return () => {
+      window.removeEventListener("credits-updated", handleUpdate);
+    };
+  }, [refreshCredits]);
 
   React.useEffect(() => {
     setPopoverOpen(false);
@@ -168,11 +204,15 @@ export function AppSidebar({ games }: { games: Game[] }) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton>
+            <SidebarMenuButton
+              render={<Link href="/billing" />}
+              isActive={pathname === "/billing"}
+              tooltip="Credits & Billing"
+            >
               <Coins />
               <span>Credits</span>
             </SidebarMenuButton>
-            <SidebarMenuBadge>$1.00</SidebarMenuBadge>
+            <SidebarMenuBadge>{balance}</SidebarMenuBadge>
           </SidebarMenuItem>
 
           <SidebarMenuItem className="flex items-center justify-between px-2 mt-4 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">

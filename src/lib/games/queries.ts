@@ -39,6 +39,20 @@ export async function getGame(gameId: string, orgId?: string) {
   return game ?? null;
 }
 
+export async function getGameOrgId(gameId: string): Promise<string | null> {
+  if (!UUID_REGEX.test(gameId)) {
+    return null;
+  }
+
+  const [game] = await db
+    .select({ orgId: games.orgId })
+    .from(games)
+    .where(eq(games.id, gameId))
+    .limit(1);
+
+  return game?.orgId ?? null;
+}
+
 export async function getGameMessages(gameId: string): Promise<UIMessage[] | null> {
   const { orgId, userId } = await auth();
   const effectiveOrgId = orgId || userId;
