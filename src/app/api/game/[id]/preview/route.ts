@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { getGame } from "@/lib/games/queries";
-import { startGameServer } from "@/lib/daytona/utils";
+import { startGameServer, getGameSandbox } from "@/lib/daytona/utils";
 
 export const maxDuration = 60;
 
@@ -23,29 +23,43 @@ export async function GET(
     return NextResponse.json({ error: "Game not found" }, { status: 404 });
   }
 
-  if (!game.sandboxId) {
+  let sandboxId = game.sandboxId;
+
+  if (!sandboxId) {
+    try {
+      const { sandbox } = await getGameSandbox(id);
+      sandboxId = sandbox.id;
+    } catch (createErr) {
+      return NextResponse.json(
+        { error: "Game sandbox is still initializing", ready: false },
+        { status: 202 },
+      );
+    }
+  }
+
+  if (!sandboxId) {
     return NextResponse.json(
-      { error: "Game does not have an associated sandbox" },
-      { status: 400 },
+      { error: "Game sandbox is still initializing", ready: false },
+      { status: 202 },
     );
   }
 
   try {
     // Ensures the HTTP server is started and healthy, returns { sandbox }
-    const { sandbox } = await startGameServer(game.sandboxId);
+    const { sandbox } = await startGameServer(sandboxId);
 
     // Mint the preview URL directly from the returned sandbox
     const preview = await sandbox.getSignedPreviewUrl(8000, 3600);
 
     Sentry.logger.info("Minted game preview URL", {
       game_id: id,
-      sandbox_id: game.sandboxId,
+      sandbox_id: sandboxId,
       preview_url: preview.url,
     });
 
     return NextResponse.json({
       url: preview.url,
-      sandboxId: game.sandboxId,
+      sandboxId,
     });
   } catch (error) {
     const errorMsg =
@@ -54,12 +68,12 @@ export async function GET(
         : "Failed to initialize game server";
     Sentry.logger.error("Failed to start game server for preview", {
       game_id: id,
-      sandbox_id: game.sandboxId,
+      sandbox_id: sandboxId,
       error_message: errorMsg,
     });
     Sentry.captureException(error, {
       tags: { game_id: id, route: "/api/game/[id]/preview" },
-      extra: { sandboxId: game.sandboxId },
+      extra: { sandboxId },
     });
     return NextResponse.json(
       { error: errorMsg },
