@@ -85,6 +85,28 @@ export async function saveGameMessages(
     .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));
 }
 
+export async function renameGame(
+  gameId: string,
+  newTitle: string,
+  orgId?: string,
+): Promise<boolean> {
+  const { orgId: clerkOrgId, userId } = await auth();
+  const effectiveOrgId = orgId ?? (clerkOrgId || userId);
+  const trimmed = newTitle.trim();
+
+  if (!effectiveOrgId || !UUID_REGEX.test(gameId) || !trimmed) {
+    return false;
+  }
+
+  const result = await db
+    .update(games)
+    .set({ title: trimmed })
+    .where(and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId)))
+    .returning({ id: games.id, title: games.title });
+
+  return result.length > 0;
+}
+
 export async function deleteGame(gameId: string, orgId?: string): Promise<boolean> {
   const { orgId: clerkOrgId, userId } = await auth();
   const effectiveOrgId = orgId ?? (clerkOrgId || userId);
@@ -93,6 +115,24 @@ export async function deleteGame(gameId: string, orgId?: string): Promise<boolea
     return false;
   }
 
+  // 1. Fetch game to find associated sandboxId before removing the row
+  const [game] = await db
+    .select({ id: games.id, sandboxId: games.sandboxId })
+    .from(games)
+    .where(and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId)))
+    .limit(1);
+
+  if (!game) {
+    return false;
+  }
+
+  // 2. Permanently delete the Daytona sandbox to prevent stray sandboxes
+  if (game.sandboxId) {
+    const { deleteGameSandbox } = await import("@/lib/daytona/utils");
+    await deleteGameSandbox(game.sandboxId).catch(() => {});
+  }
+
+  // 3. Delete from Neon DB
   const result = await db
     .delete(games)
     .where(and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId)))

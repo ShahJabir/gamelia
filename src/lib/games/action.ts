@@ -34,38 +34,44 @@ export async function createGame(formData: FormData) {
   }
 
   const userPrompt = prompt.trim();
-  let title = getFallbackTitle(userPrompt);
+  const explicitTitle = (formData.get("title") as string | null)?.trim();
+  let title =
+    explicitTitle && explicitTitle !== userPrompt
+      ? explicitTitle
+      : getFallbackTitle(userPrompt);
 
-  // Generate a short, creative game title using AI SDK generateText with Google: Gemma 4 31B (free) via OpenRouter
-  try {
-    const model = getLanguageModel("google/gemma-4-31b-it:free");
-    const { text } = await generateText({
-      model,
-      system:
-        "You are a video game naming assistant. Generate a short, catchy, creative game title (2 to 4 words, no quotes, no markdown, no punctuation) based on the user's game concept prompt. Output ONLY the title.",
-      prompt: userPrompt,
-      maxOutputTokens: 15,
-      abortSignal: AbortSignal.timeout(6000),
-    });
+  // If no explicit distinct title was provided, generate a creative title with AI
+  if (!explicitTitle || explicitTitle === userPrompt) {
+    try {
+      const model = getLanguageModel("google/gemma-4-31b-it:free");
+      const { text } = await generateText({
+        model,
+        system:
+          "You are a video game naming assistant. Generate a short, catchy, creative game title (2 to 4 words, no quotes, no markdown, no punctuation) based on the user's game concept prompt. Output ONLY the title.",
+        prompt: userPrompt,
+        maxOutputTokens: 15,
+        abortSignal: AbortSignal.timeout(6000),
+      });
 
-    const cleanTitle = text
-      .trim()
-      .replace(/[*_"`#]/g, "")
-      .replace(/^(Title|Game Title):\s*/i, "")
-      .trim();
+      const cleanTitle = text
+        .trim()
+        .replace(/[*_"`#]/g, "")
+        .replace(/^(Title|Game Title):\s*/i, "")
+        .trim();
 
-    if (cleanTitle) {
-      title = cleanTitle;
-      Sentry.logger.info("AI generated title for game", {
-        generated_title: cleanTitle,
-        prompt_preview: userPrompt.slice(0, 30),
+      if (cleanTitle) {
+        title = cleanTitle;
+        Sentry.logger.info("AI generated title for game", {
+          generated_title: cleanTitle,
+          prompt_preview: userPrompt.slice(0, 30),
+        });
+      }
+    } catch (error) {
+      Sentry.logger.warn("AI title generation error, using fallback title", {
+        error_message: error instanceof Error ? error.message : String(error),
+        fallback_title: title,
       });
     }
-  } catch (error) {
-    Sentry.logger.warn("AI title generation error, using fallback title", {
-      error_message: error instanceof Error ? error.message : String(error),
-      fallback_title: title,
-    });
   }
 
   const initialUserMessage: UIMessage = {
@@ -150,6 +156,32 @@ export async function deleteGameAction(gameId: string) {
 
   if (success) {
     revalidatePath("/", "layout");
+  }
+
+  return success;
+}
+
+export async function renameGameAction(gameId: string, newTitle: string) {
+  const { orgId, userId } = await auth();
+  const effectiveOrgId = orgId || userId;
+
+  if (!effectiveOrgId) {
+    throw new Error("Authentication is required to rename a game");
+  }
+
+  const { renameGame } = await import("@/lib/games/queries");
+  const success = await renameGame(gameId, newTitle, effectiveOrgId);
+
+  Sentry.logger.info("Game rename requested via server action", {
+    game_id: gameId,
+    org_id: effectiveOrgId,
+    new_title: newTitle,
+    success,
+  });
+
+  if (success) {
+    revalidatePath("/", "layout");
+    revalidatePath(`/game/${gameId}`);
   }
 
   return success;

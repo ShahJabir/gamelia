@@ -112,6 +112,61 @@ export async function DELETE(req: Request) {
   return Response.json({ success: true });
 }
 
+function normalizeUIMessagesForModel(msgs: UIMessage[]): UIMessage[] {
+  return (msgs ?? []).map((m) => {
+    if (!Array.isArray(m.parts)) return m;
+    const normalizedParts = (m.parts as any[]).map((p) => {
+      const part = p as Record<string, unknown>;
+      if (part.type === "tool-invocation" && part.toolInvocation) {
+        const ti = part.toolInvocation as Record<string, unknown>;
+        const toolName = String(ti.toolName);
+        const isResultAvailable =
+          ti.state === "result" ||
+          ti.state === "output-available" ||
+          ti.result !== undefined ||
+          ti.output !== undefined;
+        return {
+          type: `tool-${toolName}` as `tool-${string}`,
+          toolCallId: String(ti.toolCallId || `${toolName}-${Math.random()}`),
+          state: isResultAvailable ? ("output-available" as const) : ("call" as const),
+          input: (ti.args ?? ti.input ?? {}) as Record<string, unknown>,
+          output: ti.result ?? ti.output,
+        };
+      }
+      return p;
+    });
+    return { ...m, parts: normalizedParts } as UIMessage;
+  });
+}
+
+function formatUserFriendlyAiError(err: unknown): string {
+  const rawMsg = err instanceof Error ? err.message : String(err);
+  const lower = rawMsg.toLowerCase();
+
+  if (
+    lower.includes("quota") ||
+    lower.includes("exceeded") ||
+    lower.includes("rate limit") ||
+    lower.includes("429")
+  ) {
+    return "⚠️ **AI Quota / Rate Limit Exceeded**: The selected AI model has reached its usage or rate limit. Please try switching to a different AI model (such as Gemini 2.5 Flash, Claude 3.5 Sonnet, or GPT-4o) using the model picker below, or check your API quota.";
+  }
+
+  if (
+    lower.includes("credit") ||
+    lower.includes("balance") ||
+    lower.includes("insufficient")
+  ) {
+    return OUT_OF_CREDITS_MESSAGE;
+  }
+
+  if (lower.includes("timeout") || lower.includes("abort")) {
+    return "⚠️ **Request Timeout**: The AI generation timed out. Please try sending a follow-up or choosing a faster model.";
+  }
+
+  return `⚠️ **AI Service Notice**: An issue occurred while contacting the model provider (${rawMsg}). You can choose another model below or try again.`;
+}
+
 export async function POST(req: Request) {
   const { orgId, userId } = await auth();
   const effectiveOrgId = orgId || userId;
@@ -131,10 +186,11 @@ export async function POST(req: Request) {
   }
 
   const validMessages = sanitizeMessages(messages);
+  const normalizedMessages = normalizeUIMessagesForModel(validMessages);
 
-  // Persist the clean incoming messages to Neon DB
-  if (validMessages.length > 0) {
-    await saveGameMessages(id, effectiveOrgId, validMessages);
+  // Persist the clean incoming messages to Neon DB immediately
+  if (normalizedMessages.length > 0) {
+    await saveGameMessages(id, effectiveOrgId, normalizedMessages);
   }
 
   // Check before a session starts, and before every turn after that.
@@ -149,7 +205,7 @@ export async function POST(req: Request) {
     const textId = crypto.randomUUID();
     return createUIMessageStreamResponse({
       stream: createUIMessageStream({
-        originalMessages: validMessages,
+        originalMessages: normalizedMessages,
         execute: ({ writer }) => {
           writer.write({ type: "text-start", id: textId });
           writer.write({
@@ -195,15 +251,24 @@ export async function POST(req: Request) {
 
   try {
     const selectedModel = getLanguageModel(model);
-
     const gameTools = createGameTools(id);
 
     const result = streamText({
       model: selectedModel,
       instructions: systemPrompt,
-      messages: await convertToModelMessages(validMessages),
+      messages: await convertToModelMessages(normalizedMessages, {
+        tools: gameTools,
+      }),
       tools: gameTools,
       stopWhen: stepCountIs(15),
+      onError: ({ error }) => {
+        Sentry.logger.error("Error in streamText execution", {
+          game_id: id,
+          model,
+          error_message:
+            error instanceof Error ? error.message : String(error),
+        });
+      },
       onStepFinish: async (step) => {
         try {
           if (effectiveOrgId && step.response?.id) {
@@ -229,7 +294,9 @@ export async function POST(req: Request) {
     return createUIMessageStreamResponse({
       stream: toUIMessageStream({
         stream: result.stream,
-        originalMessages: validMessages,
+        tools: gameTools,
+        originalMessages: normalizedMessages,
+        onError: (streamErr) => formatUserFriendlyAiError(streamErr),
         onEnd: async ({ messages: finalMessages }) => {
           let cleanCount = 0;
           try {
@@ -259,19 +326,54 @@ export async function POST(req: Request) {
       }),
     });
   } catch (err: unknown) {
-    const errorMessage =
+    const rawErrorMessage =
       err instanceof Error ? err.message : "Failed to generate response";
     Sentry.logger.error("Error in /api/chat streamText", {
       game_id: id,
       model,
-      error_message: errorMessage,
+      error_message: rawErrorMessage,
     });
     Sentry.captureException(err, {
       tags: { game_id: id, route: "/api/chat", model },
     });
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+
+    const friendlyError = formatUserFriendlyAiError(err);
+    const textId = crypto.randomUUID();
+
+    // Stream the error as an assistant message and save to Neon DB
+    return createUIMessageStreamResponse({
+      stream: createUIMessageStream({
+        originalMessages: normalizedMessages,
+        execute: ({ writer }) => {
+          writer.write({ type: "text-start", id: textId });
+          writer.write({
+            type: "text-delta",
+            id: textId,
+            delta: friendlyError,
+          });
+          writer.write({ type: "text-end", id: textId });
+        },
+        onEnd: async ({ messages: finalMessages }) => {
+          try {
+            const clean = sanitizeMessages(finalMessages);
+            if (clean.length > 0) {
+              await saveGameMessages(id, effectiveOrgId, clean);
+              Sentry.logger.info("Saved AI error message to Neon DB", {
+                game_id: id,
+                org_id: effectiveOrgId,
+                message_count: clean.length,
+              });
+            }
+          } catch (dbErr) {
+            Sentry.logger.error("Failed to save AI error message to Neon DB", {
+              game_id: id,
+              org_id: effectiveOrgId,
+              error_message:
+                dbErr instanceof Error ? dbErr.message : String(dbErr),
+            });
+          }
+        },
+      }),
     });
   }
 }

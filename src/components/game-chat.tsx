@@ -48,55 +48,50 @@ export function GameChat({
     setPreviewRevision((prev) => prev + 1);
   };
 
+  const isPreviewShowing = isPreviewOpen && Boolean(activeSandboxId);
+
   return (
     <div className="h-full w-full min-h-0 overflow-hidden">
-      {!isPreviewOpen || !activeSandboxId ? (
-        <ChatThread
-          id={id}
-          title={title}
-          initialMessages={initialMessages}
-          sandboxId={activeSandboxId}
-          isPreviewOpen={false}
-          onOpenPreview={handleOpenPreview}
-          onPreviewAvailable={handlePreviewAvailable}
-          onTurnFinish={handleTurnFinish}
-        />
-      ) : (
-        <ResizablePanelGroup
-          orientation="horizontal"
-          className="h-full w-full min-h-0 overflow-hidden"
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="h-full w-full min-h-0 overflow-hidden"
+      >
+        <ResizablePanel
+          id="chat-panel"
+          defaultSize={isPreviewShowing ? 50 : 100}
+          minSize={30}
+          className="h-full min-h-0 overflow-hidden"
         >
-          <ResizablePanel
-            defaultSize={50}
-            minSize={30}
-            className="h-full min-h-0 overflow-hidden"
-          >
-            <ChatThread
-              id={id}
-              title={title}
-              initialMessages={initialMessages}
-              sandboxId={activeSandboxId}
-              isPreviewOpen={true}
-              onOpenPreview={handleOpenPreview}
-              onClosePreview={handleClosePreview}
-              onPreviewAvailable={handlePreviewAvailable}
-              onTurnFinish={handleTurnFinish}
-            />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel
-            defaultSize={50}
-            minSize={30}
-            className="h-full min-h-0 overflow-hidden"
-          >
-            <ChatPreview
-              gameId={id}
-              onClose={handleClosePreview}
-              revision={previewRevision}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      )}
+          <ChatThread
+            id={id}
+            title={title}
+            initialMessages={initialMessages}
+            sandboxId={activeSandboxId}
+            isPreviewOpen={isPreviewShowing}
+            onOpenPreview={handleOpenPreview}
+            onClosePreview={handleClosePreview}
+            onPreviewAvailable={handlePreviewAvailable}
+            onTurnFinish={handleTurnFinish}
+          />
+        </ResizablePanel>
+        {isPreviewShowing && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              id="preview-panel"
+              defaultSize={50}
+              minSize={30}
+              className="h-full min-h-0 overflow-hidden"
+            >
+              <ChatPreview
+                gameId={id}
+                onClose={handleClosePreview}
+                revision={previewRevision}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
     </div>
   );
 }

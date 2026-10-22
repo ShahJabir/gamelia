@@ -397,3 +397,29 @@ export async function getGamePreviewLink(
 
   return preview;
 }
+
+/**
+ * Deletes a Daytona sandbox permanently to clean up compute/disk and prevent stray sandboxes.
+ */
+export async function deleteGameSandbox(sandboxId: string): Promise<boolean> {
+  const apiKey = process.env.DAYTONA_API_KEY;
+  if (!apiKey || !sandboxId) {
+    return false;
+  }
+
+  try {
+    const daytona = new Daytona({ apiKey });
+    const sandbox = await daytona.get(sandboxId);
+    await sandbox.delete();
+    Sentry.logger.info("Deleted Daytona sandbox successfully", {
+      sandbox_id: sandboxId,
+    });
+    return true;
+  } catch (err) {
+    Sentry.logger.warn("Could not delete Daytona sandbox or already deleted", {
+      sandbox_id: sandboxId,
+      error_message: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}

@@ -34,7 +34,7 @@ import {
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
 import { ChatComposer } from "@/components/chat-composer";
-import { DeleteGameButton } from "@/components/delete-game-button";
+import { GameHeaderMenu } from "@/components/game-header-menu";
 import { getCachedMessages, setCachedMessages } from "@/lib/cache/chat-cache";
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models";
 import {
@@ -130,65 +130,7 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
       if (!p) continue;
       const part = p as Record<string, unknown>;
 
-      if (typeof part.type === "string" && part.type.startsWith("tool-")) {
-        const name = part.type.slice(5);
-        const rawState = part.state;
-        let state: "active" | "done" | "failed" = "active";
-
-        if (rawState === "output-error" || rawState === "output-denied") {
-          state = "failed";
-        } else if (rawState === "output-available" || Boolean(part.output)) {
-          const out = part.output as Record<string, unknown> | undefined;
-          if (out && typeof out === "object" && out.success === false) {
-            state = "failed";
-          } else {
-            state = "done";
-          }
-        } else {
-          state = "active";
-        }
-
-        const partOutput = part.output as Record<string, unknown> | undefined;
-        tools.push({
-          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
-          name,
-          state,
-          input: part.input as Record<string, unknown> | undefined,
-          output: partOutput,
-          error:
-            (part.errorText as string | undefined) ||
-            (partOutput?.error as string | undefined),
-        });
-      } else if (part.type === "dynamic-tool") {
-        const name = (part.toolName as string) || "tool";
-        const rawState = part.state;
-        let state: "active" | "done" | "failed" = "active";
-
-        if (rawState === "output-error" || rawState === "output-denied") {
-          state = "failed";
-        } else if (rawState === "output-available" || Boolean(part.output)) {
-          const out = part.output as Record<string, unknown> | undefined;
-          if (out && typeof out === "object" && out.success === false) {
-            state = "failed";
-          } else {
-            state = "done";
-          }
-        } else {
-          state = "active";
-        }
-
-        const partOutput = part.output as Record<string, unknown> | undefined;
-        tools.push({
-          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
-          name,
-          state,
-          input: part.input as Record<string, unknown> | undefined,
-          output: partOutput,
-          error:
-            (part.errorText as string | undefined) ||
-            (partOutput?.error as string | undefined),
-        });
-      } else if (part.type === "tool-invocation" && part.toolInvocation) {
+      if (part.type === "tool-invocation" && part.toolInvocation) {
         const ti = part.toolInvocation as Record<string, unknown>;
         const tiResult = (ti.result ?? ti.output) as Record<string, unknown> | undefined;
         const state: "active" | "done" | "failed" =
@@ -203,9 +145,69 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
           id: (ti.toolCallId as string) || `${String(ti.toolName)}-${Math.random()}`,
           name: String(ti.toolName),
           state,
-          input: ti.args as Record<string, unknown> | undefined,
+          input: (ti.args ?? ti.input) as Record<string, unknown> | undefined,
           output: tiResult,
-          error: tiResult?.error as string | undefined,
+          error: (ti.errorText as string) || (tiResult?.error as string | undefined),
+        });
+      } else if (
+        typeof part.type === "string" &&
+        part.type.startsWith("tool-") &&
+        part.type !== "tool-invocation"
+      ) {
+        const name = part.type.slice(5);
+        const rawState = part.state;
+        const partOutput = (part.output ?? part.result) as Record<string, unknown> | undefined;
+        let state: "active" | "done" | "failed" = "active";
+
+        if (rawState === "output-error" || rawState === "output-denied") {
+          state = "failed";
+        } else if (rawState === "output-available" || Boolean(partOutput)) {
+          if (partOutput && typeof partOutput === "object" && partOutput.success === false) {
+            state = "failed";
+          } else {
+            state = "done";
+          }
+        } else {
+          state = "active";
+        }
+
+        tools.push({
+          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
+          name,
+          state,
+          input: (part.input ?? part.args) as Record<string, unknown> | undefined,
+          output: partOutput,
+          error:
+            (part.errorText as string | undefined) ||
+            (partOutput?.error as string | undefined),
+        });
+      } else if (part.type === "dynamic-tool") {
+        const name = (part.toolName as string) || "tool";
+        const rawState = part.state;
+        const partOutput = (part.output ?? part.result) as Record<string, unknown> | undefined;
+        let state: "active" | "done" | "failed" = "active";
+
+        if (rawState === "output-error" || rawState === "output-denied") {
+          state = "failed";
+        } else if (rawState === "output-available" || Boolean(partOutput)) {
+          if (partOutput && typeof partOutput === "object" && partOutput.success === false) {
+            state = "failed";
+          } else {
+            state = "done";
+          }
+        } else {
+          state = "active";
+        }
+
+        tools.push({
+          id: (part.toolCallId as string) || `${name}-${Math.random()}`,
+          name,
+          state,
+          input: (part.input ?? part.args) as Record<string, unknown> | undefined,
+          output: partOutput,
+          error:
+            (part.errorText as string | undefined) ||
+            (partOutput?.error as string | undefined),
         });
       }
     }
@@ -218,9 +220,9 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
       const ti = item as Record<string, unknown>;
       const toolCallId = ti.toolCallId as string;
       if (tools.some((t) => t.id === toolCallId)) continue;
-      const tiResult = ti.result as Record<string, unknown> | undefined;
+      const tiResult = (ti.result ?? ti.output) as Record<string, unknown> | undefined;
       const state: "active" | "done" | "failed" =
-        ti.state === "result"
+        ti.state === "result" || Boolean(tiResult)
           ? tiResult?.success === false
             ? "failed"
             : "done"
@@ -231,7 +233,7 @@ function extractToolInvocations(msg: UIMessage): FormattedToolCall[] {
         id: toolCallId || `${String(ti.toolName)}-${Math.random()}`,
         name: String(ti.toolName),
         state,
-        input: ti.args as Record<string, unknown> | undefined,
+        input: (ti.args ?? ti.input) as Record<string, unknown> | undefined,
         output: tiResult,
         error: tiResult?.error as string | undefined,
       });
@@ -463,6 +465,32 @@ function parseAskPlayerInput(input?: Record<string, unknown>) {
   return { dimension, question, options };
 }
 
+function parseAnsweredOutput(output: unknown): { id?: string; label?: string } | null {
+  if (!output) return null;
+  if (typeof output === "string") {
+    try {
+      const parsed = JSON.parse(output);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parseAnsweredOutput(parsed);
+      }
+    } catch {
+      return { label: output };
+    }
+  }
+  if (typeof output === "object" && output !== null) {
+    const rec = output as Record<string, unknown>;
+    if (rec.value && typeof rec.value === "object" && rec.value !== null) {
+      return parseAnsweredOutput(rec.value);
+    }
+    const id = typeof rec.id === "string" ? rec.id : undefined;
+    const label = typeof rec.label === "string" ? rec.label : undefined;
+    if (id || label) {
+      return { id, label };
+    }
+  }
+  return null;
+}
+
 interface AskPlayerQuestionnaireProps {
   tool: FormattedToolCall;
   isSubmitting?: boolean;
@@ -486,13 +514,15 @@ function AskPlayerQuestionnaire({
     };
   const DimIcon = dimConfig.icon;
 
+  const answeredData = parseAnsweredOutput(tool.output);
   const isAnswered =
     tool.state === "done" ||
-    Boolean(tool.output?.id || tool.output?.label);
+    Boolean(answeredData?.id || answeredData?.label);
 
   if (isAnswered) {
-    const chosenId = (tool.output?.id as string) || "";
+    const chosenId = answeredData?.id || (tool.output?.id as string) || "";
     const chosenLabel =
+      answeredData?.label ||
       (tool.output?.label as string) ||
       options.find((o) => o.id === chosenId)?.label ||
       chosenId;
@@ -704,11 +734,16 @@ export function ChatThread({
   onPreviewAvailable,
   onTurnFinish,
 }: ChatThreadProps) {
+  const [currentTitle, setCurrentTitle] = useState(title);
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL_ID);
   const [hasFetchedPreview, setHasFetchedPreview] = useState<boolean>(false);
   const previewAvailable = Boolean(sandboxId) || hasFetchedPreview;
   const autoTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    setCurrentTitle(title);
+  }, [title]);
 
   const checkPreviewAvailability = useCallback(async () => {
     try {
@@ -770,6 +805,55 @@ export function ChatThread({
   const handleAnswerQuestionnaire = useCallback(
     async (toolCallId: string, output: { id: string; label: string }) => {
       try {
+        // 1. Immediately update local messages state so UI reflects the decision instantly
+        setMessages((prevMessages) => {
+          const updated: UIMessage[] = prevMessages.map((msg) => {
+            if (msg.role !== "assistant" || !Array.isArray(msg.parts)) return msg;
+            const updatedParts = (msg.parts as any[]).map((part) => {
+              const p = part as Record<string, unknown>;
+              if (
+                p.type === "dynamic-tool" ||
+                (typeof p.type === "string" &&
+                  p.type.startsWith("tool-") &&
+                  p.type !== "tool-invocation")
+              ) {
+                if (p.toolCallId === toolCallId) {
+                  return {
+                    ...p,
+                    state: "output-available",
+                    output,
+                  };
+                }
+              } else if (p.type === "tool-invocation" && p.toolInvocation) {
+                const ti = p.toolInvocation as Record<string, unknown>;
+                if (ti.toolCallId === toolCallId) {
+                  return {
+                    ...p,
+                    toolInvocation: {
+                      ...ti,
+                      state: "result",
+                      result: output,
+                    },
+                  };
+                }
+              }
+              return part;
+            });
+            return { ...msg, parts: updatedParts } as UIMessage;
+          });
+
+          // 2. Immediately cache the updated messages to IndexedDB so refresh never loses the decision
+          setCachedMessages(id, sanitizeUIMessages(updated)).catch((err) => {
+            Sentry.logger.warn("Failed to cache answered questionnaire", {
+              game_id: id,
+              error_message: err instanceof Error ? err.message : String(err),
+            });
+          });
+
+          return updated;
+        });
+
+        // 3. Submit output to AI SDK chat
         if (typeof addToolOutput === "function") {
           (addToolOutput as any)({
             tool: "ask_player",
@@ -791,7 +875,7 @@ export function ChatThread({
         });
       }
     },
-    [addToolOutput, selectedModel, id],
+    [addToolOutput, selectedModel, id, setMessages],
   );
 
   // Track status transitions to trigger onTurnFinish and refresh credits whenever streaming completes
@@ -860,8 +944,16 @@ export function ChatThread({
   useEffect(() => {
     if (autoTriggeredRef.current) return;
     const clean = sanitizeUIMessages(messages);
-    if (clean.length > 0 && clean[clean.length - 1]?.role === "user") {
+    // Only auto-respond for a brand-new game with a single user prompt
+    if (clean.length === 1 && clean[0]?.role === "user") {
+      const storageKey = `gamelia-autorun-${id}`;
+      if (typeof window !== "undefined" && window.sessionStorage.getItem(storageKey)) {
+        return;
+      }
       autoTriggeredRef.current = true;
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(storageKey, "true");
+      }
       regenerate({
         body: { model: selectedModel },
       }).catch((err) => {
@@ -888,11 +980,56 @@ export function ChatThread({
 
         const cleanCached = cached ? sanitizeUIMessages(cached) : [];
         if (cleanCached.length > cleanInitialMessages.length) {
-          setMessages(cleanCached);
+          // Merge tool outputs from cleanInitialMessages so answered decisions are preserved
+          const merged: UIMessage[] = cleanCached.map((cachedMsg, idx) => {
+            const initialMsg = cleanInitialMessages[idx];
+            if (!initialMsg || cachedMsg.role !== "assistant" || !Array.isArray(cachedMsg.parts)) {
+              return cachedMsg;
+            }
+            const initialParts = Array.isArray(initialMsg.parts) ? initialMsg.parts : [];
+            const mergedParts = (cachedMsg.parts as any[]).map((cp) => {
+              const cpRec = cp as Record<string, unknown>;
+              const isToolPart =
+                typeof cpRec.type === "string" &&
+                (cpRec.type.startsWith("tool-") || cpRec.type === "dynamic-tool" || cpRec.type === "tool-invocation");
+              if (isToolPart && !cpRec.output && !(cpRec.toolInvocation as Record<string, unknown> | undefined)?.result) {
+                const callId = (cpRec.toolCallId as string) || (cpRec.toolInvocation as Record<string, unknown> | undefined)?.toolCallId;
+                const match = initialParts.find((ip) => {
+                  const ipRec = ip as Record<string, unknown>;
+                  const ipCallId = (ipRec.toolCallId as string) || (ipRec.toolInvocation as Record<string, unknown> | undefined)?.toolCallId;
+                  const hasOut = Boolean(ipRec.output) || Boolean((ipRec.toolInvocation as Record<string, unknown> | undefined)?.result);
+                  return ipCallId === callId && hasOut;
+                }) as Record<string, unknown> | undefined;
+
+                if (match) {
+                  const matchOut = match.output || (match.toolInvocation as Record<string, unknown> | undefined)?.result;
+                  if (cpRec.toolInvocation) {
+                    return {
+                      ...cpRec,
+                      toolInvocation: {
+                        ...(cpRec.toolInvocation as Record<string, unknown>),
+                        state: "result",
+                        result: matchOut,
+                      },
+                    };
+                  }
+                  return {
+                    ...cpRec,
+                    state: "output-available",
+                    output: matchOut,
+                  };
+                }
+              }
+              return cp;
+            });
+            return { ...cachedMsg, parts: mergedParts } as UIMessage;
+          });
+
+          setMessages(merged);
           return;
         }
 
-        // 2. If browser cache is not seeded yet, seed it with initial Neon DB messages
+        // 2. If browser cache is not seeded yet or DB messages are equal/longer, seed with initial Neon DB messages
         if (cleanInitialMessages.length > 0) {
           await setCachedMessages(id, cleanInitialMessages);
           return;
@@ -943,14 +1080,14 @@ export function ChatThread({
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden">
-      {/* Sticky Header with Chat Title, Preview Toggle, and Delete Icon Button */}
+      {/* Sticky Header with Chat Title, Preview Toggle, and Options Dropdown Menu */}
       <header className="sticky top-0 z-10 flex h-13 shrink-0 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-md">
         <div className="flex items-center gap-2 overflow-hidden">
           <h1
             className="truncate text-sm font-semibold text-foreground"
-            title={title || "New Game"}
+            title={currentTitle || "New Game"}
           >
-            {title || "New Game"}
+            {currentTitle || "New Game"}
           </h1>
         </div>
         <div className="flex items-center gap-2">
@@ -966,7 +1103,11 @@ export function ChatThread({
               <span>Preview Game</span>
             </Button>
           )}
-          <DeleteGameButton gameId={id} gameTitle={title} variant="header" />
+          <GameHeaderMenu
+            gameId={id}
+            gameTitle={currentTitle}
+            onTitleChange={setCurrentTitle}
+          />
         </div>
       </header>
 
@@ -979,7 +1120,7 @@ export function ChatThread({
                 {displayMessages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
                     <p className="text-base font-medium text-foreground">
-                      {title || "New Game"}
+                      {currentTitle || "New Game"}
                     </p>
                     <p className="mt-1 max-w-sm text-xs text-muted-foreground">
                       No message history yet. Describe your ideas or ask

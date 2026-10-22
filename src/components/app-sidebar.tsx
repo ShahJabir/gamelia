@@ -21,7 +21,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
-import { DeleteGameButton } from "@/components/delete-game-button";
+import { GameOptionsMenu } from "@/components/game-header-menu";
 import {
   Popover,
   PopoverContent,
@@ -134,7 +134,7 @@ export function AppSidebar({
                       <span className="truncate">{game.title}</span>
                     </SidebarMenuButton>
                     <div className="absolute right-1 z-10 flex items-center">
-                      <DeleteGameButton
+                      <GameOptionsMenu
                         gameId={game.id}
                         gameTitle={game.title}
                         variant="sidebar"
@@ -183,7 +183,7 @@ export function AppSidebar({
                               <span className="truncate">{game.title}</span>
                             </SidebarMenuButton>
                             <div className="absolute right-1 z-10 flex items-center">
-                              <DeleteGameButton
+                              <GameOptionsMenu
                                 gameId={game.id}
                                 gameTitle={game.title}
                                 variant="sidebar"
